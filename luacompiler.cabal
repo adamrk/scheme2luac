@@ -2,21 +2,25 @@ name:                luacompiler
 version:             0.1.0.0
 -- synopsis:
 -- description:
-homepage:            https://github.com/githubuser/luacompiler#readme
+homepage:            https://github.com/adamrk/luacompiler#readme
 license:             BSD3
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2017 Author name here
-category:            Web
+author:              Adam Bratschi-Kaye
+maintainer:          ark.email@gmail.com
+copyright:           2017 Adam Bratschi-Kaye
+category:            Compiler
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Lib
+  exposed-modules:     AST
+                     , Assembler
   build-depends:       base >= 4.7 && < 5
+                     , bytestring
+                     , containers
+                     , text
   default-language:    Haskell2010
 
 executable luacompiler-exe

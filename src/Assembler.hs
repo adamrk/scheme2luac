@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main where
+module Assembler where
 
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder (Builder, 
@@ -12,7 +12,6 @@ import Data.ByteString.Builder (Builder,
                                 toLazyByteString,
                                 )
 import Data.Word (Word8, Word32)
-import Data.Text.Lazy.Encoding (encodeUtf8)
 import Data.Text.Lazy (Text, pack)
 import qualified Data.Map as M
 
@@ -216,27 +215,27 @@ luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                                   IABx OpGetGlobal 0 0
                                 , IABx OpLoadK 1 1
                                 , IABx OpLoadK 2 2
-                                , IABC OpConcat 1 1 2
+                                , IABC OpAdd 1 1 2
                                 , IABC OpCall 0 2 1
                                 , IABC OpReturn 0 1 0
                                 ], 
-                   constants=[LuaString "print",
-                              LuaString "hello",
-                              LuaString " world!"],
+                   constants=[ LuaString "print"
+                             , LuaNumber 5.0
+                             , LuaNumber 6.0],
                    functions=[]}
 
-finalBuilder :: Maybe Builder
-finalBuilder = (fmap mconcat) . sequence $
+finalBuilder :: LuaFunc -> Maybe Builder
+finalBuilder f = (fmap mconcat) . sequence $
                  [Just $ foldMap word8 luaHeader, -- header 
                   Just $ word32LE 0, -- source name could go here
-                  toBS luaFunc, -- main function 
+                  toBS f, -- main function 
                   Just $ foldMap word32LE [0,0,0]] -- 3 optional lists set to 0
 
 -- Write bytestring to file for testing
 writeBuilder :: String -> Builder -> IO ()
 writeBuilder file = BL.writeFile file . toLazyByteString
 
-main :: IO ()
-main = case finalBuilder of 
+testOutput :: IO ()
+testOutput = case finalBuilder luaFunc of 
   Just bs -> writeBuilder "temp" bs
   Nothing -> print "error completing builder"
