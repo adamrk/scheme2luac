@@ -21,6 +21,7 @@ library
                      , bytestring
                      , containers
                      , text
+                     , trifecta
   default-language:    Haskell2010
 
 executable luacompiler-exe
