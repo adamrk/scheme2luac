@@ -185,7 +185,8 @@ instance (ToByteString a) => ToByteString [a] where
 
 instance ToByteString LuaFunc where
   toBS func = (fmap mconcat) . sequence $ 
-                       map Just [word32LE (startline func), 
+                       map Just [ word32LE 0, -- source name could go here
+                                  word32LE (startline func), 
                                   word32LE (endline func),
                                   word8 (upvals func),
                                   word8 (params func),
@@ -219,15 +220,16 @@ luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                                 , IABC OpCall 0 2 1
                                 , IABC OpReturn 0 1 0
                                 ], 
-                   constants=[ LuaString "print"
-                             , LuaNumber 5.0
-                             , LuaNumber 6.0],
-                   functions=[]}
+                   
+                   constants=   [ LuaString "print"
+                                , LuaNumber 5.0
+                                , LuaNumber 6.0],
+                   
+                   functions=   []}
 
 finalBuilder :: LuaFunc -> Maybe Builder
 finalBuilder f = (fmap mconcat) . sequence $
-                 [Just $ foldMap word8 luaHeader, -- header 
-                  Just $ word32LE 0, -- source name could go here
+                 [Just $ foldMap word8 luaHeader, -- header
                   toBS f, -- main function 
                   Just $ foldMap word32LE [0,0,0]] -- 3 optional lists set to 0
 
