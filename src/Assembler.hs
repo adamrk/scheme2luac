@@ -211,18 +211,39 @@ luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
 
 luaFunc :: LuaFunc -- Example function to test
 luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=3, 
-                   instructions=[
-                                  IABx OpGetGlobal 0 0
-                                , IABx OpLoadK 1 1
-                                , IABx OpLoadK 2 2
-                                , IABC OpAdd 1 1 2
-                                , IABC OpCall 0 2 1
-                                , IABC OpReturn 0 1 0
+                   maxstack=10, 
+                   instructions=[ IABC  OpLoadNil 0 1 0
+                                , IABC  OpEq 1 0 1
+                                , IAsBx OpJmp 0 1
+                                , IAsBx OpJmp 0 3
+                                , IABx  OpGetGlobal 0 0
+                                , IABx  OpLoadK 1 1
+                                , IABC  OpCall 0 2 1
+                                , IABC  OpReturn 0 1 0
                                 ], 
                    
                    constants=   [ LuaString "print"
                                 , LuaNumber 5.0
+                                , LuaNumber 6.0],
+                   
+                   functions=   []}
+
+luaFunc' :: LuaFunc -- Example function to test
+luaFunc' = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+                   maxstack=2, 
+                   instructions=[ IABx  OpGetGlobal 0 2
+                                , IABC  OpLoadNil 1 1 0
+                                , IABC  OpEq 0 0 1
+                                , IAsBx OpJmp 0 3
+                                , IABx  OpGetGlobal 0 0
+                                , IABx  OpLoadK 1 1
+                                , IABC  OpCall 0 2 1
+                                , IABC  OpReturn 0 1 0
+                                ], 
+                   
+                   constants=   [ LuaString "print"
+                                , LuaString "succes! loads nil"
+                                , LuaString "foo"
                                 , LuaNumber 6.0],
                    
                    functions=   []}
@@ -238,6 +259,6 @@ writeBuilder :: String -> Builder -> IO ()
 writeBuilder file = BL.writeFile file . toLazyByteString
 
 testOutput :: IO ()
-testOutput = case finalBuilder luaFunc of 
+testOutput = case finalBuilder luaFunc' of 
   Just bs -> writeBuilder "temp" bs
   Nothing -> print "error completing builder"
