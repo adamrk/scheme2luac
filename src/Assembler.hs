@@ -195,6 +195,9 @@ instance ToByteString LuaFunc where
                     ++          [ toBS $ instructions func,
                                   toBS $ constants func,
                                   toBS $ functions func]
+                    ++ map Just [ word32LE 0,
+                                  word32LE 0,
+                                  word32LE 0]              
 
 
 -- luac header for my architecture
@@ -228,31 +231,45 @@ luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    
                    functions=   []}
 
+smallFunc = LuaFunc{ startline=0, endline=0, upvals=0,
+                                  params=0, vararg=0, maxstack=1,
+            instructions = [
+                             IABx  OpLoadK 0 0
+                           , IABC  OpReturn 0 2 0
+                           ],
+            constants =    [LuaNumber 2],
+            functions =    []}
+
 luaFunc' :: LuaFunc -- Example function to test
 luaFunc' = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=2, 
-                   instructions=[ IABx  OpGetGlobal 0 2
-                                , IABC  OpLoadNil 1 1 0
-                                , IABC  OpEq 0 0 1
-                                , IAsBx OpJmp 0 3
-                                , IABx  OpGetGlobal 0 0
-                                , IABx  OpLoadK 1 1
-                                , IABC  OpCall 0 2 1
+                   maxstack=3, 
+                   instructions=[ 
+                                  IABC  OpNewTable 0 0 0
+                                -- , IABC  OpSetTable 0 256 257
+                                , IABx OpGetGlobal 1 3
+                                , IABx  OpClosure 2 0
+                                , IABC  OpMove 0 0 0
+                                -- , IABx  OpSetGlobal 1 2
+                                -- , IABx  OpGetGlobal 1 3
+                                -- , IABx  OpGetGlobal 2 2
+                                , IABC  OpCall 2 1 2
+                                , IABC  OpCall 1 2 1
                                 , IABC  OpReturn 0 1 0
                                 ], 
                    
-                   constants=   [ LuaString "print"
-                                , LuaString "succes! loads nil"
+                   constants=   [ LuaNumber 0
                                 , LuaString "foo"
-                                , LuaNumber 6.0],
+                                , LuaString "func"
+                                , LuaString "print"],
                    
-                   functions=   []}
+                   functions=   [smallFunc]}
 
 finalBuilder :: LuaFunc -> Maybe Builder
 finalBuilder f = (fmap mconcat) . sequence $
                  [Just $ foldMap word8 luaHeader, -- header
-                  toBS f, -- main function 
-                  Just $ foldMap word32LE [0,0,0]] -- 3 optional lists set to 0
+                  toBS f -- main function 
+                  --Just $ foldMap word32LE [0,0,0] -- 3 optional lists set to 0
+                  ] 
 
 -- Write bytestring to file for testing
 writeBuilder :: String -> Builder -> IO ()

@@ -2,8 +2,103 @@ module Main where
 
 import AST
 import Assembler
+import Parser
 import Data.Monoid
 import Data.List (foldl')
+import Text.Trifecta (parseFromFile, Result(Success, Failure))
+import qualified Data.Map as M
+
+type AtomTable = M.Map String Int
+
+genEval :: AtomTable -> Value -> LuaFunc
+genEval _ (Number n) = LuaFunc{ startline=0, endline=0, upvals=1, 
+                              params=0, vararg=0, maxstack=1, 
+                 instructions=[ 
+                                IABx  OpLoadK 0 0
+                              , IABC  OpReturn 0 2 0
+                              ],   
+                 constants=   [ LuaNumber . fromIntegral $ n ], 
+                 functions=   []}
+
+genEval t (Atom x) = let inx = M.findWithDefault 0 x t
+                     in  LuaFunc{ startline=0, endline=0, upvals=1,
+                                  params=0, vararg=0, maxstack=2,
+            instructions = [ IABC  OpGetUpVal 0 0 0
+                           , IABC  OpGetTable 1 0 256
+                           , IABC  OpReturn 1 2 0
+                           ],
+            constants =    [LuaNumber . fromIntegral $ inx],
+            functions =    []}
+
+genEval t (List [x]) = genEval t x
+genEval t (List [Atom "define", Atom x, f]) = 
+                    let inx = M.findWithDefault 0 x t
+                    in  LuaFunc{ startline=0, endline=0, upvals=1,
+                                 params=0, vararg=0, maxstack=2,
+            instructions = [ IABC  OpGetUpVal 0 0 0
+                           , IABx  OpClosure 1 0
+                           , IABC  OpGetUpVal 0 0 0
+                           , IABC  OpCall 1 1 2
+                           , IABC  OpSetTable 0 256 1
+                           , IABC  OpReturn 0 1 0
+                           ],
+            constants =    [ LuaNumber . fromIntegral $ inx
+                           ],
+            functions =    [genEval t f]}
+
+genEval t (List [Atom "+", x, y]) = 
+    LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=2,
+      instructions = [ IABx  OpClosure 0 0
+                     , IABC  OpGetUpVal 0 0 0
+                     , IABC  OpCall 0 1 2
+                     , IABx  OpClosure 1 1
+                     , IABC  OpGetUpVal 0 0 0
+                     , IABC  OpCall 1 1 2
+                     , IABC  OpAdd 0 0 1
+                     , IABC  OpReturn 0 2 0
+                     ],
+      constants = [],
+      functions = [genEval t x, genEval t y]}
+
+closeAndCall :: Int -> [LuaInstruction]
+-- put the closure in register 2 and call it without inputs
+closeAndCall n = [ IABx  OpClosure 2 n
+                 , IABC  OpMove 0 0 0 
+                 , IABC  OpCall 2 1 2
+                 ]
+
+genProgram :: [Value] -> LuaFunc
+genProgram vs = let atable = M.fromList $ zip (foldMap getAtoms vs) [0..] 
+                    funcs = map (genEval atable) vs
+                    ins = IABC OpNewTable 0 0 0 : IABx OpGetGlobal 1 0 : 
+                          foldMap closeAndCall [0..length vs - 1] ++
+                          [IABC OpCall 1 2 1, IABC OpReturn 0 1 0]
+                    cns = [LuaString "print"]
+                in  LuaFunc {startline=0, endline=0, upvals=0, params=0, 
+                             vararg=2, maxstack=3,instructions=ins, 
+                             constants=cns, functions=funcs}
+
+luafunc :: IO (Maybe LuaFunc)
+luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
+
+result2maybe :: Result a -> Maybe a
+result2maybe (Success x) = Just x
+result2maybe (Failure x) = Nothing
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 type BasicLuaFunc = ([LuaInstruction], [LuaConst], Int) -- int is top of stack
 
@@ -50,6 +145,8 @@ foofunc :: LuaFunc
 foofunc = genFunc . inst $ foo'
 
 main :: IO ()
-main = case finalBuilder foofunc of 
-  Just bs -> writeBuilder "temp" bs
-  Nothing -> print "error completing builder"
+main = do
+  f <- luafunc 
+  case f >>= finalBuilder of 
+    Just bs -> writeBuilder "temp" bs
+    Nothing -> print "error completing builder"

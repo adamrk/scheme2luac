@@ -8,7 +8,7 @@ import Data.List (intercalate)
 import Control.Applicative ((<|>))
 import System.IO
 
-data Value = Number Integer 
+data Value = Number Integer
            | Atom String
            | List [Value]
            deriving (Eq, Show)
@@ -27,7 +27,12 @@ list = fmap List $ parens $
         whiteSpace *> some (token number <|> token atom <|> token list)
 
 file :: Parser [Value]
-file = sepBy (token list) newline
+file = some list
 
-parseFile :: IO ()
-parseFile = parseFromFile file "samplecode" >>= print
+getAtoms :: Value -> [String]
+getAtoms (Atom x) = pure x
+getAtoms (List xs) = foldMap getAtoms xs
+getAtoms _ = mempty
+
+parseFile :: IO (Maybe [Value])
+parseFile = parseFromFile file "samplecode"
