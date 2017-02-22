@@ -25,7 +25,7 @@ genEval t (Atom x) = let inx = M.findWithDefault 0 x t
                      in  LuaFunc{ startline=0, endline=0, upvals=1,
                                   params=0, vararg=0, maxstack=2,
             instructions = [ IABC  OpGetUpVal 0 0 0
-                           , IABC  OpGetTable 1 0 256
+                           , IABC  OpGetTable 1 0 256 
                            , IABC  OpReturn 1 2 0
                            ],
             constants =    [LuaNumber . fromIntegral $ inx],
@@ -61,7 +61,7 @@ genEval t (List [Atom "+", x, y]) =
       constants = [],
       functions = [genEval t x, genEval t y]}
 
---genEval t (List [Atom ])
+--genEval t (List [Atom "define", List (Atom f:xs), List vs])
 
 copyTable :: Int -> LuaFunc
 copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
@@ -84,7 +84,49 @@ copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
                    ],
     functions    = []}
 
+
+lookupOnce :: Int -> LuaFunc
+-- takes two params, second is a table
+-- we look up index n in the table and if it is nil return (lookup 0, lookup 0)
+-- if the value is not nil return (nil, val)
+-- The idea is that 0 points to the next environment up so we could call again
+lookupOnce n = LuaFunc { startline=0, endline=0, upvals=0, params=2,
+                            vararg=0, maxstack=5,
+     instructions    = [ IABC  OpLoadNil 2 2 0
+                       , IABC  OpGetTable 3 1 256
+                       , IABC  OpEq 0 2 3
+                       , IAsBx OpJmp 0 3
+                       , IABC  OpGetTable 3 1 257
+                       , IABC  OpMove 4 3 0
+                       , IAsBx OpJmp 0 2
+                       , IABC  OpMove 4 3 0
+                       , IABC  OpLoadNil 3 3 0
+                       , IABC  OpReturn 3 3 0
+                       ],
+     constants       = [ LuaNumber . fromIntegral $ n
+                       , LuaNumber 0 ],
+     functions       = []}
+
+lookupEnv :: Int -> LuaFunc
+-- assumes table is first upval, looks up the index and traces back to previous
+-- environments if null
+lookupEnv n =  LuaFunc { startline=0, endline=0, upvals=1, params=0,
+                         vararg=0, maxstack=5, -- TForloop returns values in 3,4
+        instructions = [ IABx  OpClosure 0 0
+                       , IABC  OpLoadNil 1 1 0
+                       , IABC  OpGetUpVal 2 0 0
+                       , IABC  OpTForLoop 0 0 2
+                       , IAsBx OpJmp 0 (-2)
+                       , IABC  OpReturn 4 2 0
+                       ],
+        constants    = [ LuaNumber . fromIntegral $ n
+                       , LuaNumber 0
+                       ],
+        functions    = [lookupOnce n]}
+
+
 printTable :: Int -> LuaFunc
+-- useful for debugging??
 printTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
                          maxstack=7,
     instructions = [ IABC  OpGetUpVal 0 0 0
@@ -99,7 +141,7 @@ printTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
                    , IABC  OpReturn 0 1 0
                    ],
     constants    = [ LuaNumber 0
-                   , LuaNumber . fromIntegral $ (n-2)
+                   , LuaNumber . fromIntegral $ (n-1)
                    , LuaNumber 1
                    , LuaString "print"
                    ],
@@ -125,7 +167,8 @@ genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [0..]
                              constants=cns, functions=funcs}
 
 addPrintTable :: [Value] -> LuaFunc
-addPrintTable vs = let tblSize = length $ zip (nub $ foldMap getAtoms vs) [0..]
+-- Useful for debugging??
+addPrintTable vs = let tblSize = length $ zip (nub $ foldMap getAtoms vs) [1..]
                        nFuncs = length vs
                        func = genProgram vs
                    in  LuaFunc { startline = startline func
@@ -143,6 +186,44 @@ addPrintTable vs = let tblSize = length $ zip (nub $ foldMap getAtoms vs) [0..]
                                     [printTable tblSize]
                                }
 
+sampleFunc :: LuaFunc -- Example function to test
+sampleFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+                   maxstack=5, 
+                   instructions=[ 
+                                  IABC  OpNewTable 0 0 0
+                                , IABC  OpSetTable 0 257 261
+                                , IABC  OpSetTable 0 258 262
+                                , IABC  OpSetTable 0 259 263
+                                , IABC  OpNewTable 1 0 0
+                                , IABC  OpSetTable 1 256 0
+                                , IABC  OpSetTable 1 257 264
+                                , IABC  OpSetTable 1 260 265
+                                , IABx  OpClosure 2 0
+                                , IABC  OpMove 0 1 0
+                                , IABC  OpCall 2 1 2
+                                , IABx  OpGetGlobal 3 10
+                                , IABC  OpMove 4 2 0
+                                , IABC  OpCall 3 2 1
+                                , IABC  OpReturn 0 1 0 
+                                ], 
+                   
+                   constants=   [ LuaNumber 0
+                                , LuaNumber 1
+                                , LuaNumber 2
+                                , LuaNumber 3
+                                , LuaNumber 4
+                                , LuaString "first entry"
+                                , LuaString "foo"
+                                , LuaString "bar"
+                                , LuaString "baz"
+                                , LuaString "qux"
+                                , LuaString "print"
+                                ],
+                   
+                   functions=   [ lookupEnv 4
+                                , printTable 5
+                                ]}
+
 
 luafunc :: IO (Maybe LuaFunc)
 luafunc = (fmap . fmap) addPrintTable $ parseFromFile file "samplecode"
@@ -153,66 +234,11 @@ result2maybe (Failure x) = Nothing
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-type BasicLuaFunc = ([LuaInstruction], [LuaConst], Int) -- int is top of stack
-
-genInst :: BasicLuaFunc -> Inst -> BasicLuaFunc
-genInst (ins, cns, n) (OpLoad' x) = ( ins ++ [IABx OpLoadK (n+1) (length cns)]
-                                    , cns ++ [LuaNumber $ fromIntegral x]
-                                    , n + 1
-                                    )
-genInst (ins, cns, n) OpAdd' = ( ins ++ [IABC OpAdd (n-1) (n-1) n]
-                               , cns
-                               , n - 1
-                               )
-genInst (ins, cns, n) OpMult' = ( ins ++ [IABC OpMul (n-1) (n-1) n]
-                                , cns
-                                , n - 1
-                                )
-genInst (ins, cns, n) OpSubr' = ( ins ++ [IABC OpSub (n-1) (n-1) n]
-                                , cns
-                                , n - 1)
-
-stackInc :: Inst -> Sum Int
-stackInc (OpLoad' _) = Sum 1
-stackInc _ = mempty
-
-getMaxStack :: [Inst] -> Sum Int
-getMaxStack = foldMap stackInc
-
-startIns :: BasicLuaFunc
-startIns = ([IABx OpGetGlobal 0 0], [LuaString "print"], 0)
-
-foldIns :: [Inst] -> BasicLuaFunc
-foldIns = foldl' genInst startIns
-
-genFunc :: [Inst] -> LuaFunc
-genFunc xs = let (ins, cns, n) = foldIns xs
-                 Sum maxStack = getMaxStack xs
-             in  LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack= fromIntegral maxStack + 1, 
-                   instructions= ins ++ [IABC OpCall 0 2 1, IABC OpReturn 0 1 0], 
-                   constants=cns,
-                   functions=[]}
-
-foofunc :: LuaFunc
-foofunc = genFunc . inst $ foo'
-
 main :: IO ()
-main = do
-  f <- luafunc 
-  case f >>= finalBuilder of 
-    Just bs -> writeBuilder "temp" bs
-    Nothing -> print "error completing builder"
+main = case finalBuilder sampleFunc of
+            Just bs -> writeBuilder "temp" bs
+            Nothing -> print "error completing builder"
+  -- f <- luafunc 
+  -- case f >>= finalBuilder of 
+  --   Just bs -> writeBuilder "temp" bs
+  --   Nothing -> print "error completing builder"
