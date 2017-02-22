@@ -231,13 +231,20 @@ luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    
                    functions=   []}
 
-smallFunc = LuaFunc{ startline=0, endline=0, upvals=0,
-                                  params=0, vararg=0, maxstack=1,
+smallFunc = LuaFunc{ startline=0, endline=0, upvals=1,
+                                  params=0, vararg=0, maxstack=3,
             instructions = [
-                             IABx  OpLoadK 0 0
-                           , IABC  OpReturn 0 2 0
+                             IABC  OpGetUpVal 0 0 0
+                           , IABC  OpSetTable 0 256 257
+                           , IABx  OpGetGlobal 1 2
+                           , IABC  OpGetTable 2 0 256
+                           , IABC  OpCall 1 2 1
+                           , IABC  OpReturn 0 1 0
                            ],
-            constants =    [LuaNumber 2],
+            constants =    [ LuaNumber 0
+                           , LuaString "bar"
+                           , LuaString "print"
+                           ],
             functions =    []}
 
 luaFunc' :: LuaFunc -- Example function to test
@@ -245,14 +252,22 @@ luaFunc' = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    maxstack=3, 
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0
-                                -- , IABC  OpSetTable 0 256 257
-                                , IABx OpGetGlobal 1 3
-                                , IABx  OpClosure 2 0
+                                , IABC  OpSetTable 0 256 257
+                                , IABC  OpSetTable 0 260 257 
+                                , IABx  OpClosure 1 0
                                 , IABC  OpMove 0 0 0
                                 -- , IABx  OpSetGlobal 1 2
                                 -- , IABx  OpGetGlobal 1 3
                                 -- , IABx  OpGetGlobal 2 2
-                                , IABC  OpCall 2 1 2
+                                , IABC  OpCall 1 1 1
+                                , IABx  OpGetGlobal 1 3 
+                                , IABC  OpGetTable 2 0 256
+                                , IABC  OpCall 1 2 1
+                                , IABx  OpGetGlobal 1 3
+                                , IABC  OpGetTable 2 0 260
+                                , IABC  OpCall 1 2 1
+                                , IABx  OpGetGlobal 1 3
+                                , IABC  OpMove 2 0 0
                                 , IABC  OpCall 1 2 1
                                 , IABC  OpReturn 0 1 0
                                 ], 
@@ -260,7 +275,9 @@ luaFunc' = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    constants=   [ LuaNumber 0
                                 , LuaString "foo"
                                 , LuaString "func"
-                                , LuaString "print"],
+                                , LuaString "print"
+                                , LuaNumber 1
+                                , LuaString "bar"],
                    
                    functions=   [smallFunc]}
 

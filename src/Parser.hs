@@ -6,6 +6,7 @@ import Text.Trifecta
 import Data.Char (isSpace)
 import Data.List (intercalate)
 import Control.Applicative ((<|>))
+import Data.List (nub)
 import System.IO
 
 data Value = Number Integer
@@ -31,7 +32,7 @@ file = some list
 
 getAtoms :: Value -> [String]
 getAtoms (Atom x) = pure x
-getAtoms (List xs) = foldMap getAtoms xs
+getAtoms (List xs) = nub $ foldMap getAtoms xs
 getAtoms _ = mempty
 
 parseFile :: IO (Maybe [Value])

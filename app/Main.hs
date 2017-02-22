@@ -6,6 +6,7 @@ import Parser
 import Data.Monoid
 import Data.List (foldl')
 import Text.Trifecta (parseFromFile, Result(Success, Failure))
+import Data.List (nub)
 import qualified Data.Map as M
 
 type AtomTable = M.Map String Int
@@ -60,6 +61,50 @@ genEval t (List [Atom "+", x, y]) =
       constants = [],
       functions = [genEval t x, genEval t y]}
 
+--genEval t (List [Atom ])
+
+copyTable :: Int -> LuaFunc
+copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+                        maxstack=7,
+    instructions = [ IABC  OpGetUpVal 0 0 0
+                   , IABC  OpNewTable 1 0 0 
+                   , IABx  OpLoadK 2 0
+                   , IABx  OpLoadK 3 1
+                   , IABx  OpLoadK 4 2
+                   , IAsBx OpForPrep 2 2
+                   -- skip register 5 for external loop variable
+                   , IABC  OpGetTable 6 0 2 
+                   , IABC  OpSetTable 1 2 6
+                   , IAsBx OpForLoop 2 (-3)
+                   , IABC  OpReturn 1 2 0
+                   ], -- Working here!!!!!!!!!!!!!!!!!1
+    constants    = [ LuaNumber 0
+                   , LuaNumber . fromIntegral $ (n-2)
+                   , LuaNumber 1
+                   ],
+    functions    = []}
+
+printTable :: Int -> LuaFunc
+printTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
+                         maxstack=7,
+    instructions = [ IABC  OpGetUpVal 0 0 0
+                   , IABx  OpLoadK 1 0
+                   , IABx  OpLoadK 2 1
+                   , IABx  OpLoadK 3 2
+                   , IAsBx OpForPrep 1 3
+                   , IABx  OpGetGlobal 5 3
+                   , IABC  OpGetTable 6 0 1
+                   , IABC  OpCall 5 2 1
+                   , IAsBx OpForLoop 1 (-4)
+                   , IABC  OpReturn 0 1 0
+                   ],
+    constants    = [ LuaNumber 0
+                   , LuaNumber . fromIntegral $ (n-2)
+                   , LuaNumber 1
+                   , LuaString "print"
+                   ],
+    functions    = []}
+
 closeAndCall :: Int -> [LuaInstruction]
 -- put the closure in register 2 and call it without inputs
 closeAndCall n = [ IABx  OpClosure 2 n
@@ -68,18 +113,39 @@ closeAndCall n = [ IABx  OpClosure 2 n
                  ]
 
 genProgram :: [Value] -> LuaFunc
-genProgram vs = let atable = M.fromList $ zip (foldMap getAtoms vs) [0..] 
+genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [0..] 
                     funcs = map (genEval atable) vs
                     ins = IABC OpNewTable 0 0 0 : IABx OpGetGlobal 1 0 : 
                           foldMap closeAndCall [0..length vs - 1] ++
-                          [IABC OpCall 1 2 1, IABC OpReturn 0 1 0]
+                          [ IABC OpCall 1 2 1
+                          , IABC OpReturn 0 1 0]
                     cns = [LuaString "print"]
                 in  LuaFunc {startline=0, endline=0, upvals=0, params=0, 
                              vararg=2, maxstack=3,instructions=ins, 
                              constants=cns, functions=funcs}
 
+addPrintTable :: [Value] -> LuaFunc
+addPrintTable vs = let tblSize = length $ zip (nub $ foldMap getAtoms vs) [0..]
+                       nFuncs = length vs
+                       func = genProgram vs
+                   in  LuaFunc { startline = startline func
+                               , endline = endline func
+                               , upvals = 0, params = 0, vararg = 2
+                               , maxstack = 3
+                               , instructions = init (instructions func) ++
+                                 [ IABx OpClosure 2 nFuncs
+                                 , IABC OpMove 0 0 0
+                                 , IABC OpCall 2 1 1
+                                 , IABC OpReturn 0 1 0
+                                 ]
+                               , constants = constants func
+                               , functions = functions func ++ 
+                                    [printTable tblSize]
+                               }
+
+
 luafunc :: IO (Maybe LuaFunc)
-luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
+luafunc = (fmap . fmap) addPrintTable $ parseFromFile file "samplecode"
 
 result2maybe :: Result a -> Maybe a
 result2maybe (Success x) = Just x
