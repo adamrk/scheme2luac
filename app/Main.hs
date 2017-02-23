@@ -51,28 +51,16 @@ genEval t (List [Atom "define", Atom x, f]) =
                            ],
             functions =    [genEval t f]}
 
-
---- Need to change this to not take parameters??
---- otherwise it will not work with define above
 genEval t (List [Atom "lambda", List vars, f]) = 
-        let nvars = length vars
-            inxs = map (\(Atom x) -> M.findWithDefault 0 x t) vars
-        in  
-                        LuaFunc{ startline=4, endline=4, upvals=1, 
-                                 params = fromIntegral nvars, vararg=0, 
-                                 maxstack = fromIntegral nvars + 2,
-            instructions = [ IABC  OpNewTable nvars 0 0
-                           , IABC  OpGetUpVal (nvars+1) 0 0
-                           , IABC  OpSetTable nvars (nvars+256) (nvars+1)
-                           ] ++
-                              (map (\x -> IABC OpSetTable nvars (256+x) x) 
-                                [0..nvars-1]) ++
-                           [ IABx  OpClosure (nvars+1) 0
-                           , IABC  OpMove 0 nvars 0
-                           , IABC  OpReturn (nvars+1) 2 0
-                           ],
-            constants    = map (LuaNumber . fromIntegral) inxs ++ [LuaNumber 0], 
-            functions    = [genEval t f]}
+  let nvars = length vars
+      inxs  = map (\(Atom x) -> M.findWithDefault 0 x t) vars
+  in LuaFunc{ startline=4, endline=4, upvals=1, params=0, vararg=0, 
+              maxstack = 1,
+    instructions = [ IABx  OpClosure 0 0
+                   , IABC  OpGetUpVal 0 0 0
+                   , IABC  OpReturn 0 2 0],
+    constants    = [],
+    functions    = [genLambda t vars f]}
 
 genEval t (List [Atom "+", x, y]) = 
     LuaFunc { startline=5, endline=5, upvals=1, params=0, vararg=0, maxstack=2,
@@ -92,25 +80,41 @@ genEval t (List (f:xs)) = let nvars = length xs
  in 
     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
               maxstack = fromIntegral nvars + 3,
-      instructions = [ IABC  OpGetUpVal 0 0 0
-                     , IABC  OpNewTable 1 0 0
-                     , IABC  OpSetTable 1 256 0
-                     , IABx  OpClosure 2 0
-                     , IABC  OpMove 0 1 0
-                     ] ++ 
+      instructions =   IABC  OpGetUpVal 0 0 0 : 
                        concatMap (\x -> 
                           [ IABC OpNewTable 1 0 0
                           , IABC OpSetTable 1 256 0
                           , IABx OpClosure (x+2) x
                           , IABC OpMove 0 1 0
                           , IABC OpCall (x+2) 1 2
-                          ]) [1..nvars]
+                          ]) [0..nvars]
                        ++
                       [ IABC  OpCall 2 (fromIntegral nvars + 1) 2
-                      , IABC  OpCall 2 1 2
                       , IABC  OpReturn 2 2 0],
       constants =    [ LuaNumber 0 ],
       functions =    genEval t f : map (genEval t) xs}
+
+genLambda :: AtomTable -> [Value] -> Value -> LuaFunc
+genLambda t vars f = 
+  let nvars = length vars
+      inxs = map (\(Atom x) -> M.findWithDefault 0 x t) vars
+  in  
+                        LuaFunc{ startline=5, endline=5, upvals=1, 
+                                 params = fromIntegral nvars, vararg=0, 
+                                 maxstack = fromIntegral nvars + 2,
+            instructions = [ IABC  OpNewTable nvars 0 0
+                           , IABC  OpGetUpVal (nvars+1) 0 0
+                           , IABC  OpSetTable nvars (nvars+256) (nvars+1)
+                           ] ++
+                              (map (\x -> IABC OpSetTable nvars (256+x) x) 
+                                [0..nvars-1]) ++
+                           [ IABx  OpClosure (nvars+1) 0
+                           , IABC  OpMove 0 nvars 0
+                           , IABC  OpCall (nvars+1) 1 2
+                           , IABC  OpReturn (nvars+1) 2 0
+                           ],
+            constants    = map (LuaNumber . fromIntegral) inxs ++ [LuaNumber 0], 
+            functions    = [genEval t f]}
 
 copyTable :: Int -> LuaFunc
 copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
