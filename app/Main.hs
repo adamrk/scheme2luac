@@ -23,29 +23,55 @@ genEval _ (Number n) = LuaFunc{ startline=0, endline=0, upvals=1,
 
 genEval t (Atom x) = let inx = M.findWithDefault 0 x t
                      in  LuaFunc{ startline=0, endline=0, upvals=1,
-                                  params=0, vararg=0, maxstack=2,
-            instructions = [ IABC  OpGetUpVal 0 0 0
-                           , IABC  OpGetTable 1 0 256 
-                           , IABC  OpReturn 1 2 0
+                                  params=0, vararg=0, maxstack=1,
+            instructions = [ IABx  OpClosure 0 0
+                           , IABC  OpGetUpVal 0 0 0
+                           , IABC  OpCall 0 1 2 
+                           , IABC  OpReturn 0 2 0
                            ],
-            constants =    [LuaNumber . fromIntegral $ inx],
-            functions =    []}
+            constants =    [ ],
+            functions =    [ lookupEnv inx ]}
 
 genEval t (List [x]) = genEval t x
 genEval t (List [Atom "define", Atom x, f]) = 
                     let inx = M.findWithDefault 0 x t
                     in  LuaFunc{ startline=0, endline=0, upvals=1,
-                                 params=0, vararg=0, maxstack=2,
-            instructions = [ IABC  OpGetUpVal 0 0 0
-                           , IABx  OpClosure 1 0
-                           , IABC  OpGetUpVal 0 0 0
-                           , IABC  OpCall 1 1 2
-                           , IABC  OpSetTable 0 256 1
+                                 params=0, vararg=0, maxstack=3,
+            instructions = [ IABC  OpNewTable 0 0 0
+                           , IABC  OpGetUpVal 1 0 0
+                           , IABC  OpSetTable 0 257 1
+                           , IABx  OpClosure 2 0
+                           , IABC  OpMove 0 0 0
+                           , IABC  OpCall 2 1 2
+                           , IABC  OpSetTable 1 256 2
                            , IABC  OpReturn 0 1 0
                            ],
             constants =    [ LuaNumber . fromIntegral $ inx
+                           , LuaNumber 0
                            ],
             functions =    [genEval t f]}
+
+genEval t (List [Atom "lambda", List vars, f]) = 
+        let nvars = length vars
+            inxs = map (\(Atom x) -> M.findWithDefault 0 x t) vars
+        in  
+                        LuaFunc{ startline=0, endline=0, upvals=1, 
+                                 params = fromIntegral nvars, vararg=0, 
+                                 maxstack = fromIntegral nvars + 2,
+            instructions = [ IABC  OpNewTable nvars 0 0
+                           , IABC  OpGetUpVal (nvars+1) 0 0
+                           , IABC  OpSetTable nvars (nvars+256) (nvars+1)
+                           ] ++
+                              (map (\x -> IABC OpSetTable nvars (256+x) x) 
+                                [0..nvars-1]) ++
+                           [ IABx  OpClosure (nvars+1) 0
+                           , IABC  OpMove 0 nvars 0
+                           , IABC  OpReturn (nvars+1) 2 0
+                           ],
+
+            constants    = map (LuaNumber . fromIntegral) inxs ++ [LuaNumber 0], 
+                           
+            functions    = [genEval t f]}
 
 genEval t (List [Atom "+", x, y]) = 
     LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=2,
@@ -154,8 +180,11 @@ closeAndCall n = [ IABx  OpClosure 2 n
                  , IABC  OpCall 2 1 2
                  ]
 
+-- getting an error on pulling a nil value from the table
+
 genProgram :: [Value] -> LuaFunc
-genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [0..] 
+genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [1..] 
+                  -- tables zip from 1 because 0 points to prev environment
                     funcs = map (genEval atable) vs
                     ins = IABC OpNewTable 0 0 0 : IABx OpGetGlobal 1 0 : 
                           foldMap closeAndCall [0..length vs - 1] ++
@@ -168,7 +197,8 @@ genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [0..]
 
 addPrintTable :: [Value] -> LuaFunc
 -- Useful for debugging??
-addPrintTable vs = let tblSize = length $ zip (nub $ foldMap getAtoms vs) [1..]
+addPrintTable vs = let tblSize = (length . nub . foldMap getAtoms $ vs) - 1
+                       -- is -1 right?
                        nFuncs = length vs
                        func = genProgram vs
                    in  LuaFunc { startline = startline func
@@ -226,19 +256,20 @@ sampleFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
 
 
 luafunc :: IO (Maybe LuaFunc)
-luafunc = (fmap . fmap) addPrintTable $ parseFromFile file "samplecode"
+luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
 
 result2maybe :: Result a -> Maybe a
 result2maybe (Success x) = Just x
 result2maybe (Failure x) = Nothing
 
-
+experiment :: IO ()
+experiment = case finalBuilder sampleFunc' of
+                  Just bs -> writeBuilder "temp" bs
+                  Nothing -> print "error completing builder"
 
 main :: IO ()
-main = case finalBuilder sampleFunc of
-            Just bs -> writeBuilder "temp" bs
-            Nothing -> print "error completing builder"
-  -- f <- luafunc 
-  -- case f >>= finalBuilder of 
-  --   Just bs -> writeBuilder "temp" bs
-  --   Nothing -> print "error completing builder"
+main = do
+  f <- luafunc 
+  case f >>= finalBuilder of 
+    Just bs -> writeBuilder "temp" bs
+    Nothing -> print "error completing builder"
