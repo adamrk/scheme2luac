@@ -25,7 +25,7 @@ number = fmap Number $ natural <|> char '-' *> fmap negate natural
 
 list :: Parser Value
 list = fmap List $ parens $ 
-        whiteSpace *> some (token number <|> token atom <|> token list)
+        whiteSpace *> many (token number <|> token atom <|> token list)
 
 file :: Parser [Value]
 file = some list
