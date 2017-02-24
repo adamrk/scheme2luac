@@ -72,6 +72,17 @@ genEval t (List [Atom "lambda", List vars, f]) =
     constants    = [],
     functions    = [genLambda t vars f]}
 
+genEval t (List [Atom "register-global", Atom x]) =
+  LuaFunc{ startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
+    instructions = [ IABx  OpClosure 0 0
+                   , IABC  OpGetUpVal 0 0 0
+                   , IABC  OpCall 0 1 2
+                   , IABx  OpSetGlobal 0 0
+                   , IABC  OpReturn 0 1 0
+                   ],
+    constants    = [ LuaString x ],
+    functions    = [ genEval t (Atom x) ]}
+
 genEval t (List (f:xs)) = let nvars = length xs
  in 
     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
@@ -236,7 +247,6 @@ addPrim t =
                      ],
       constants    = inxs,
       functions    = funcs}
-
 
 ------------------------- Main IO -----------------------------
 
