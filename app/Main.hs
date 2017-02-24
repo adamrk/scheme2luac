@@ -1,12 +1,12 @@
 module Main where
 
-import AST
 import Assembler
 import Parser
 import Data.Monoid
 import Data.List (foldl')
 import Text.Trifecta (parseFromFile, Result(Success, Failure))
 import Data.List (nub)
+import Data.Maybe (maybeToList)
 import qualified Data.Map as M
 
 -- | At compile time we create the `AtomTable` to convert each `Atom` to an 
@@ -71,20 +71,6 @@ genEval t (List [Atom "lambda", List vars, f]) =
                    ],
     constants    = [],
     functions    = [genLambda t vars f]}
-
-genEval t (List [Atom "+", x, y]) = 
-    LuaFunc { startline=5, endline=5, upvals=1, params=0, vararg=0, maxstack=2,
-      instructions = [ IABx  OpClosure 0 0 -- closure to eval x
-                     , IABC  OpGetUpVal 0 0 0 -- pass env
-                     , IABC  OpCall 0 1 2 -- evaluate x
-                     , IABx  OpClosure 1 1 -- closure to eval y
-                     , IABC  OpGetUpVal 0 0 0 -- pass env
-                     , IABC  OpCall 1 1 2 -- evaluate y
-                     , IABC  OpAdd 0 0 1 -- add x y -> register 0
-                     , IABC  OpReturn 0 2 0
-                     ],
-      constants = [],
-      functions = [genEval t x, genEval t y]}
 
 genEval t (List (f:xs)) = let nvars = length xs
  in 
@@ -192,10 +178,10 @@ closeAndCall n = [ IABx  OpClosure 2 n
 genProgram :: [Value] -> LuaFunc
 genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [1..] 
                   -- ^tables zip from 1 because 0 points to prev environment
-                    funcs = map (genEval atable) vs
+                    funcs = addPrim atable : map (genEval atable) vs
                     ins =   IABC OpNewTable 0 0 0 -- original env 
                           : IABx OpGetGlobal 1 0 -- print -> reg 1
-                          : foldMap closeAndCall [0..length vs - 1] -- eval vals 
+                          : foldMap closeAndCall [0..length vs] -- eval vals 
                           ++
                           [ IABC OpCall 1 2 1 -- call print on reg 2
                           , IABC OpReturn 0 1 0
@@ -204,6 +190,55 @@ genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [1..]
                 in  LuaFunc {startline=0, endline=0, upvals=0, params=0, 
                              vararg=2, maxstack=3,instructions=ins, 
                              constants=cns, functions=funcs}
+
+------------------- Functions to load at beginning ------------------------
+multiplication :: LuaFunc
+multiplication = LuaFunc { startline=0, endline=0, upvals=0, params=2, vararg=0,
+                   maxstack = 2,
+    instructions = [ IABC  OpMul 0 0 1 
+                   , IABC  OpReturn 0 2 0
+                   ],
+    constants    = [],
+    functions    = []}
+
+addition :: LuaFunc
+addition = LuaFunc { startline=0, endline=0, upvals=0, params=2, vararg=0,
+                   maxstack = 2,
+    instructions = [ IABC  OpAdd 0 0 1 
+                   , IABC  OpReturn 0 2 0
+                   ],
+    constants    = [],
+    functions    = []}
+
+
+primitives :: [(String, LuaFunc)]
+primitives = [ ("*", multiplication) 
+             , ("+", addition)]
+
+addPrim :: AtomTable -> LuaFunc
+addPrim t = 
+  let inxfunc = foldMap (\(x,f) -> maybeToList ((,) f <$> M.lookup x t)) 
+                  $ primitives -- table inx, function tuples
+      funcs = map fst inxfunc -- list of funcs
+      inxs = map (LuaNumber . fromIntegral . snd) inxfunc -- list of indexes
+      np = length funcs
+  --    inxpairs = zip (map fst inxfunc) [0..] -- table inx, func list inx tuple
+  in  
+    LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=2,
+      instructions = [ IABC  OpGetUpVal 0 0 0
+                     , IABx  OpClosure 1 0 
+                     ]
+                     ++ (foldMap (\n -> [ IABx  OpClosure 1 n
+                                       , IABC  OpSetTable 0 (256+n) 1 ]) 
+                                [0..np-1])
+                     ++
+                     [ IABC  OpReturn 0 1 0 
+                     ],
+      constants    = inxs,
+      functions    = funcs}
+
+
+------------------------- Main IO -----------------------------
 
 luafunc :: IO (Maybe LuaFunc)
 luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
