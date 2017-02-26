@@ -7,6 +7,7 @@ import Data.List (foldl')
 import Text.Trifecta (parseFromFile, Result(Success, Failure))
 import Data.List (nub)
 import Data.Maybe (maybeToList)
+import System.Environment (getArgs)
 import qualified Data.Map as M
 
 -- | At compile time we create the `AtomTable` to convert each `Atom` to an 
@@ -311,15 +312,19 @@ addPrim t =
 luafunc :: IO (Maybe LuaFunc)
 luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
 
+compileFromFile :: String -> IO (Maybe LuaFunc)
+compileFromFile = (fmap . fmap) genProgram . parseFromFile file
+
 result2maybe :: Result a -> Maybe a
 result2maybe (Success x) = Just x
 result2maybe (Failure x) = Nothing
 
 main :: IO ()
 main = do
-  f <- luafunc 
+  xs <- getArgs
+  f <- compileFromFile (head xs)
   case f >>= finalBuilder of 
-    Just bs -> writeBuilder "temp" bs
+    Just bs -> writeBuilder (xs !! 1) bs
     Nothing -> print "error completing builder"
 
 
