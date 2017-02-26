@@ -10,6 +10,7 @@ import Data.List (nub)
 import System.IO
 
 data Value = Number Integer
+           | Boolean Bool
            | Atom String
            | List [Value]
            deriving (Eq, Show)
@@ -21,11 +22,19 @@ atom :: Parser Value
 atom = fmap Atom $ some validChar
 
 number :: Parser Value
-number = fmap Number $ natural <|> char '-' *> fmap negate natural
+number = fmap Number $ natural
+
+bool :: Parser Value
+bool = fmap Boolean $ 
+          (string "#t" *> return True) 
+      <|> (string "#f" *> return False)
 
 list :: Parser Value
 list = fmap List $ parens $ 
-        whiteSpace *> many (token number <|> token atom <|> token list)
+        whiteSpace *> many (token bool 
+                        <|> token number 
+                        <|> token atom 
+                        <|> token list)
 
 file :: Parser [Value]
 file = some list

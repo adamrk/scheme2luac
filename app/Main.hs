@@ -31,6 +31,15 @@ genEval _ (Number n) = LuaFunc{ startline=1, endline=1, upvals=1,
                  constants=   [ LuaNumber . fromIntegral $ n ], 
                  functions=   []}
 
+genEval _ (Boolean b) = let val = if b then 1 else 0
+                        in  LuaFunc{ startline=1, endline=1, upvals=1,
+                                     params=0, vararg=0, maxstack=1,
+                instructions = [ IABC  OpLoadBool 0 val 0
+                               , IABC  OpReturn 0 2 0
+                               ],
+                constants    = [],
+                functions    = []}
+
 genEval t (Atom x) = let inx = M.findWithDefault 0 x t
                      in  LuaFunc{ startline=2, endline=2, upvals=1,
                                   params=0, vararg=0, maxstack=1,
@@ -71,6 +80,34 @@ genEval t (List [Atom "lambda", List vars, f]) =
                    ],
     constants    = [],
     functions    = [genLambda t vars f]}
+
+genEval t (List [Atom "if", cond, exp1, exp2]) = 
+    LuaFunc{ startline=4, endline=4, upvals=1, params=0, vararg=0, 
+              maxstack = 4,
+    instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
+                   , IABC  OpNewTable 1 0 0 --- new env table
+                   , IABC  OpSetTable 1 256 0 -- point new table to old
+                   , IABx  OpClosure 2 0 -- cond closure
+                   , IABC  OpMove 0 1 0 -- pass env
+                   , IABC  OpCall 2 1 2 -- call cond
+                   , IABC  OpLoadBool 3 1 0 -- load true
+                   , IABC  OpEq 0 3 2 -- skip if reg 2 is true
+                   , IAsBx OpJmp 0 6 -- jump to false case
+                   , IABC  OpNewTable 1 0 0 -- new env for exp1
+                   , IABC  OpSetTable 1 256 0 -- point new table to old
+                   , IABx  OpClosure 2 1 -- exp1 closure
+                   , IABC  OpMove 0 1 0 -- pass in env
+                   , IABC  OpCall 2 1 2 -- get expr
+                   , IAsBx OpJmp 0 5 -- jump to return
+                   , IABC  OpNewTable 1 0 0 -- new env for exp2
+                   , IABC  OpSetTable 1 256 0 -- point new table to old
+                   , IABx  OpClosure 2 2 -- exp2 closure
+                   , IABC  OpMove 0 1 0 -- pass in env
+                   , IABC  OpCall 2 1 2 -- get expr
+                   , IABC  OpReturn 2 2 0
+                   ],
+    constants    = [ LuaNumber 0 ],
+    functions    = [ genEval t cond, genEval t exp1, genEval t exp2 ]}
 
 genEval t (List [Atom "register-global", Atom x]) =
   LuaFunc{ startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
@@ -203,28 +240,51 @@ genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [1..]
                              constants=cns, functions=funcs}
 
 ------------------- Functions to load at beginning ------------------------
-multiplication :: LuaFunc
-multiplication = LuaFunc { startline=0, endline=0, upvals=0, params=2, vararg=0,
-                   maxstack = 2,
-    instructions = [ IABC  OpMul 0 0 1 
-                   , IABC  OpReturn 0 2 0
-                   ],
-    constants    = [],
-    functions    = []}
-
-addition :: LuaFunc
-addition = LuaFunc { startline=0, endline=0, upvals=0, params=2, vararg=0,
-                   maxstack = 2,
-    instructions = [ IABC  OpAdd 0 0 1 
-                   , IABC  OpReturn 0 2 0
-                   ],
-    constants    = [],
-    functions    = []}
-
 
 primitives :: [(String, LuaFunc)]
-primitives = [ ("*", multiplication) 
-             , ("+", addition)]
+primitives = [ ("*", LuaFunc { startline=0, endline=0, upvals=0, params=2, 
+                               vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpMul 0 0 1 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []}) 
+             , ("+", LuaFunc { startline=0, endline=0, upvals=0, params=2, 
+                               vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpAdd 0 0 1 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("-", LuaFunc { startline=0, endline=0, upvals=0, params=2, 
+                               vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpSub 0 0 1 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("quotient", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=2, vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpDiv 0 0 1 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("modulo", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=2, vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpMod 0 0 1 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("expt", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=2, vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpPow 0 0 1 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             ]
 
 addPrim :: AtomTable -> LuaFunc
 addPrim t = 
@@ -233,11 +293,9 @@ addPrim t =
       funcs = map fst inxfunc -- list of funcs
       inxs = map (LuaNumber . fromIntegral . snd) inxfunc -- list of indexes
       np = length funcs
-  --    inxpairs = zip (map fst inxfunc) [0..] -- table inx, func list inx tuple
   in  
     LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=2,
       instructions = [ IABC  OpGetUpVal 0 0 0
-                     , IABx  OpClosure 1 0 
                      ]
                      ++ (foldMap (\n -> [ IABx  OpClosure 1 n
                                        , IABC  OpSetTable 0 (256+n) 1 ]) 
