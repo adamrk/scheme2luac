@@ -91,7 +91,7 @@ genEval t (List [Atom "if", cond, exp1, exp2]) =
                    , IABx  OpClosure 2 0 -- cond closure
                    , IABC  OpMove 0 1 0 -- pass env
                    , IABC  OpCall 2 1 2 -- call cond
-                   , IABC  OpLoadBool 3 1 0 -- load true
+                   , IABC  OpLoadBool 3 1 0 -- load true in reg 3
                    , IABC  OpEq 0 3 2 -- skip if reg 2 is true
                    , IAsBx OpJmp 0 6 -- jump to false case
                    , IABC  OpNewTable 1 0 0 -- new env for exp1
@@ -282,6 +282,43 @@ primitives = [ ("*", LuaFunc { startline=0, endline=0, upvals=0, params=2,
                                       params=2, vararg=0, maxstack = 2,
                     instructions = [ IABC  OpPow 0 0 1 
                                    , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("not", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=1, vararg=0, maxstack = 1,
+                    instructions = [ IABC  OpNot 0 0 0 
+                                   , IABC  OpReturn 0 2 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("=", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=2, vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpEq 0 0 1 -- if eq then PC++
+                                   , IAsBx OpJmp 0 1 -- jmp requred after eq
+                                   , IABC  OpLoadBool 0 1 1 -- load true, PC++
+                                   , IABC  OpLoadBool 0 0 0 -- load false  
+                                   , IABC  OpReturn 0 2 0 
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , ("<", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=2, vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpLT 0 0 1 -- if lt then PC++
+                                   , IAsBx OpJmp 0 1 -- jmp requred after lt
+                                   , IABC  OpLoadBool 0 1 1 -- load true, PC++
+                                   , IABC  OpLoadBool 0 0 0 -- load false  
+                                   , IABC  OpReturn 0 2 0 
+                                   ],
+                    constants    = [],
+                    functions    = []})
+             , (">", LuaFunc { startline=0, endline=0, upvals=0, 
+                                      params=2, vararg=0, maxstack = 2,
+                    instructions = [ IABC  OpLT 0 1 0 -- if gt then PC++
+                                   , IAsBx OpJmp 0 1 -- jmp requred after gt
+                                   , IABC  OpLoadBool 0 1 1 -- load true, PC++
+                                   , IABC  OpLoadBool 0 0 0 -- load false  
+                                   , IABC  OpReturn 0 2 0 
                                    ],
                     constants    = [],
                     functions    = []})
