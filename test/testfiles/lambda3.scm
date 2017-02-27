@@ -1,0 +1,1 @@
+((lambda (f x) (+ 1 (f x))) (lambda (x) (+ x 10)) 10)
