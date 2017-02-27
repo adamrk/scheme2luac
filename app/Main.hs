@@ -243,27 +243,74 @@ genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [1..]
 ------------------- Functions to load at beginning ------------------------
 
 primitives :: [(String, LuaFunc)]
-primitives = [ ("*", LuaFunc { startline=0, endline=0, upvals=0, params=2, 
-                               vararg=0, maxstack = 2,
-                    instructions = [ IABC  OpMul 0 0 1 
-                                   , IABC  OpReturn 0 2 0
-                                   ],
-                    constants    = [],
-                    functions    = []}) 
-             , ("+", LuaFunc { startline=0, endline=0, upvals=0, params=2, 
-                               vararg=0, maxstack = 2,
-                    instructions = [ IABC  OpAdd 0 0 1 
-                                   , IABC  OpReturn 0 2 0
-                                   ],
-                    constants    = [],
-                    functions    = []})
-             , ("-", LuaFunc { startline=0, endline=0, upvals=0, params=2, 
-                               vararg=0, maxstack = 2,
-                    instructions = [ IABC  OpSub 0 0 1 
-                                   , IABC  OpReturn 0 2 0
-                                   ],
-                    constants    = [],
-                    functions    = []})
+primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
+                              vararg=2, maxstack=7, 
+                   instructions=[ 
+                                  IABC  OpNewTable 0 0 0
+                                , IABC  OpVarArg 1 0 0
+                                , IABC  OpSetList 0 0 1
+                                , IABx  OpLoadK 1 0
+                                , IABC  OpLen 2 0 0
+                                , IABx  OpLoadK 3 0
+                                , IABx  OpLoadK 5 0
+                                , IAsBx OpForPrep 1 2
+                                , IABC  OpGetTable 6 0 1
+                                , IABC  OpMul 5 5 6
+                                , IAsBx OpForLoop 1 (-3)
+                                , IABC  OpReturn 5 2 0
+                                ], 
+                   constants=   [ LuaNumber 1
+                                ],
+                   functions=   []}) 
+             , ("+", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
+                              vararg=2, maxstack=7, 
+                   instructions=[ 
+                                  IABC  OpNewTable 0 0 0
+                                , IABC  OpVarArg 1 0 0
+                                , IABC  OpSetList 0 0 1
+                                , IABx  OpLoadK 1 1
+                                , IABC  OpLen 2 0 0
+                                , IABx  OpLoadK 3 1
+                                , IABx  OpLoadK 5 0
+                                , IAsBx OpForPrep 1 2
+                                , IABC  OpGetTable 6 0 1
+                                , IABC  OpAdd 5 5 6
+                                , IAsBx OpForLoop 1 (-3)
+                                , IABC  OpReturn 5 2 0
+                                ], 
+                   
+                   constants=   [ LuaNumber 0
+                                , LuaNumber 1
+                                ],
+                   
+                   functions=   []})
+             , ("-", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
+                              vararg=2, maxstack=9, 
+                   instructions=[ 
+                                  IABC  OpNewTable 0 0 0 -- table for args
+                                , IABC  OpVarArg 1 0 0 -- load arguments
+                                , IABC  OpSetList 0 0 1  -- save args in table
+                                , IABx  OpLoadK 1 2 -- 2 -> reg 1 (loop init)
+                                , IABC  OpLen 2 0 0 -- #args -> reg 2 (loop max) 
+                                , IABx  OpLoadK 3 1 -- 1 -> reg 3 (loop step)
+                                , IABC  OpGetTable 5 0 257 -- first arg -> reg 5
+                                , IABC  OpEq 0 3 2 -- if #args = 1 pc+
+                                , IAsBx OpJmp 0 2 -- jump to for loop
+                                , IABC  OpUnM 5 5 0 -- negate first arg
+                                , IAsBx OpJmp 0 4 -- jump to return
+                                , IAsBx OpForPrep 1 2 
+                                , IABC  OpGetTable 6 0 1 -- load table value
+                                , IABC  OpSub 5 5 6 -- r5 = r5 - r6
+                                , IAsBx OpForLoop 1 (-3)  
+                                , IABC  OpReturn 5 2 0
+                                ], 
+                   
+                   constants=   [ LuaNumber 0
+                                , LuaNumber 1
+                                , LuaNumber 2
+                                ],
+                   
+                   functions=   [printTable 7]})
              , ("quotient", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
                     instructions = [ IABC  OpDiv 0 0 1 
@@ -435,42 +482,63 @@ addPrintTable vs = let tblSize = (length . nub . foldMap getAtoms $ vs) - 1
                                     [printTable tblSize]
                                }
 
-sampleFunc :: LuaFunc -- Example function to test
-sampleFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=5, 
+sumFunc :: LuaFunc -- Example function to test
+sumFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+                   maxstack=7, 
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0
-                                , IABC  OpSetTable 0 257 261
-                                , IABC  OpSetTable 0 258 262
-                                , IABC  OpSetTable 0 259 263
-                                , IABC  OpNewTable 1 0 0
-                                , IABC  OpSetTable 1 256 0
-                                , IABC  OpSetTable 1 257 264
-                                , IABC  OpSetTable 1 260 265
-                                , IABx  OpClosure 2 0
-                                , IABC  OpMove 0 1 0
-                                , IABC  OpCall 2 1 2
-                                , IABx  OpGetGlobal 3 10
-                                , IABC  OpMove 4 2 0
-                                , IABC  OpCall 3 2 1
-                                , IABC  OpReturn 0 1 0 
+                                , IABC  OpVarArg 1 0 0
+                                , IABC  OpSetList 0 0 1
+                                , IABx  OpLoadK 1 1
+                                , IABC  OpLen 2 0 0
+                                , IABx  OpLoadK 3 1
+                                , IABx  OpLoadK 5 0
+                                , IAsBx OpForPrep 1 2
+                                , IABC  OpGetTable 6 0 1
+                                , IABC  OpAdd 5 5 6
+                                , IAsBx OpForLoop 1 (-3)
+                                , IABC  OpReturn 5 2 0
                                 ], 
                    
                    constants=   [ LuaNumber 0
                                 , LuaNumber 1
+                                ],
+                   
+                   functions=   [ 
+                                ]}
+
+sampleFunc :: LuaFunc -- Example function to test
+sampleFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+                   maxstack=6, 
+                   instructions=[ IABx OpGetGlobal 0 0
+                                , IABx OpClosure 1 0
+                                , IABx OpLoadK 2 1
+                                , IABx OpLoadK 3 2
+                                , IABx OpLoadK 4 3
+                                , IABx OpLoadK 5 4
+                                , IABC OpCall 1 0 2
+                                , IABC OpCall 0 2 1
+                                --, IABC OpSetList 0 0 1
+                                --, IABx  OpGetGlobal 0 0
+                                --, IABx  OpClosure 1 0
+                                -- , IABx  OpLoadK 2 1
+                                -- , IABx  OpLoadK 3 2
+                                -- , IABx  OpLoadK 4 3
+                                -- , IABC  OpCall 1 4 2 
+                                -- , IABC  OpCall 0 2 1  
+                                , IABC  OpReturn 0 1 0 
+                                ], 
+                   
+                   constants=   [ 
+                                  LuaString "print"
+                                , LuaNumber 0
+                                , LuaNumber 1
                                 , LuaNumber 2
                                 , LuaNumber 3
                                 , LuaNumber 4
-                                , LuaString "first entry"
-                                , LuaString "foo"
-                                , LuaString "bar"
-                                , LuaString "baz"
-                                , LuaString "qux"
-                                , LuaString "print"
                                 ],
                    
-                   functions=   [ lookupEnv 4
-                                , printTable 5
+                   functions=   [ sumFunc 
                                 ]}
 
 experiment :: IO ()
