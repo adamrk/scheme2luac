@@ -30,19 +30,19 @@ bool = fmap Boolean $
       <|> (string "#f" *> return False)
 
 list :: Parser Value
-list = fmap List $ parens $ 
-        whiteSpace *> many (token bool 
-                        <|> token number 
-                        <|> token atom 
-                        <|> token list)
+list = fmap List $ parens $ file
 
 file :: Parser [Value]
-file = some list
+file = whiteSpace *> many (   list 
+                          <|> token bool
+                          <|> number
+                          <|> token atom
+                          )
 
 getAtoms :: Value -> [String]
 getAtoms (Atom x) = pure x
 getAtoms (List xs) = nub $ foldMap getAtoms xs
 getAtoms _ = mempty
 
-parseFile :: IO (Maybe [Value])
-parseFile = parseFromFile file "samplecode"
+parseFile :: String -> IO (Maybe [Value])
+parseFile = parseFromFile file
