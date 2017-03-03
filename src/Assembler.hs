@@ -197,10 +197,10 @@ instance ToByteString LuaFunc where
                                   toBS $ functions func]
                     ++ map Just [ word32LE 0,
                                   word32LE 0,
-                                  word32LE 0]              
+                                  word32LE 0]       
 
 
--- luac header for my architecture
+-- luac header for my setup
 luaHeader :: [Word8]
 luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
             [0x51] ++ -- Version Lua 5.1
