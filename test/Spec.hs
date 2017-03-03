@@ -1,8 +1,14 @@
 import Assembler
 import CodeGenerator
+import Parser
 import Test.Hspec
+import Test.QuickCheck
 import System.Process
 import System.FilePath
+import System.Exit
+import qualified Data.Map as M
+import Data.List (nub)
+
 
 endVal :: String -> String
 endVal s = let ls = lines s
@@ -63,6 +69,21 @@ fileExCompare s =
                 readCreateProcess (shell $ "lua " ++ outfile) ""
             it s $ endVal a `shouldBe` b
 
+bytecodeParses :: String -> LuaFunc -> SpecWith ()
+bytecodeParses s luafunc = do
+  (exitCode, stdOut, stdErr) <- runIO $
+    case finalBuilder luafunc of
+      Just bs -> writeBuilder outfile bs >> do 
+        readCreateProcessWithExitCode (shell $ "luac -l -l " ++ outfile) "" 
+      Nothing -> return (ExitFailure 101, "AssemblyError", "AssemblyError")
+  it (s ++ " assembled") $ exitCode `shouldNotBe` (ExitFailure 101)
+  it (s ++ " valid bytecode") $ exitCode `shouldBe` ExitSuccess
+  where outfile = "test/testfiles/temp.luac" 
+
+dummyLuaFunc :: Value -> LuaFunc
+dummyLuaFunc v = let atable = M.fromList $ zip (nub $ getAtoms v) [1..]
+                 in  genEval atable v
+
 main :: IO ()
 main = hspec $ do
   describe "define tests" 
@@ -75,3 +96,5 @@ main = hspec $ do
         $ mapM_ fileExCompare lambdaScripts
   describe "recursive tests"
         $ mapM_ fileExCompare recursiveScripts
+  describe "bytecodeParses" 
+        $ mapM_ (uncurry bytecodeParses) primitives

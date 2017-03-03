@@ -245,18 +245,18 @@ primitives :: [(String, LuaFunc)]
 primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
                               vararg=2, maxstack=7, 
                    instructions=[ 
-                                  IABC  OpNewTable 0 0 0
-                                , IABC  OpVarArg 1 0 0
-                                , IABC  OpSetList 0 0 1
-                                , IABx  OpLoadK 1 0
-                                , IABC  OpLen 2 0 0
-                                , IABx  OpLoadK 3 0
-                                , IABx  OpLoadK 5 0
-                                , IAsBx OpForPrep 1 2
-                                , IABC  OpGetTable 6 0 1
-                                , IABC  OpMul 5 5 6
+                                  IABC  OpNewTable 0 0 0 -- to hold values
+                                , IABC  OpVarArg 1 0 0 -- args in reg 1 and up
+                                , IABC  OpSetList 0 0 1 -- save args to table
+                                , IABx  OpLoadK 1 0 -- load 1 (loop init)
+                                , IABC  OpLen 2 0 0 -- load length (loop max)
+                                , IABx  OpLoadK 3 0 -- load 1 (loop step)
+                                , IABx  OpLoadK 5 0 -- first arg
+                                , IAsBx OpForPrep 1 2 
+                                , IABC  OpGetTable 6 0 1 -- next arg
+                                , IABC  OpMul 5 5 6 -- product -> r5
                                 , IAsBx OpForLoop 1 (-3)
-                                , IABC  OpReturn 5 2 0
+                                , IABC  OpReturn 5 2 0 -- return 
                                 ], 
                    constants=   [ LuaNumber 1
                                 ],
