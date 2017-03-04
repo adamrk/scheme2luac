@@ -21,8 +21,8 @@ type AtomTable = M.Map String Int
 -- returns a single value which is the result of evaluating the value (or
 -- possibly no value e.g. in the case of define).
 --
-genEval :: AtomTable -> Value -> LuaFunc
-genEval _ (Number n) = LuaFunc{ startline=1, endline=1, upvals=1, 
+genEval :: Value -> LuaFunc
+genEval (Number n) = LuaFunc{ startline=1, endline=1, upvals=1, 
                               params=0, vararg=0, maxstack=1, 
                  instructions=[ 
                                 IABx  OpLoadK 0 0 -- Load n
@@ -31,29 +31,27 @@ genEval _ (Number n) = LuaFunc{ startline=1, endline=1, upvals=1,
                  constants=   [ LuaNumber . fromIntegral $ n ], 
                  functions=   []}
 
-genEval _ (Boolean b) = let val = if b then 1 else 0
-                        in  LuaFunc{ startline=1, endline=1, upvals=1,
-                                     params=0, vararg=0, maxstack=1,
-                instructions = [ IABC  OpLoadBool 0 val 0
-                               , IABC  OpReturn 0 2 0
-                               ],
-                constants    = [],
-                functions    = []}
+genEval (Boolean b) = let val = if b then 1 else 0
+                      in  LuaFunc{ startline=1, endline=1, upvals=1,
+                                   params=0, vararg=0, maxstack=1,
+              instructions = [ IABC  OpLoadBool 0 val 0
+                             , IABC  OpReturn 0 2 0
+                             ],
+              constants    = [],
+              functions    = []}
 
-genEval t (Atom x) = let inx = M.findWithDefault 0 x t
-                     in  LuaFunc{ startline=2, endline=2, upvals=1,
-                                  params=0, vararg=0, maxstack=1,
-            instructions = [ IABx  OpClosure 0 0 -- closure to look up x
-                           , IABC  OpGetUpVal 0 0 0 -- pass env table as upval
-                           , IABC  OpCall 0 1 2 -- call lookup closure
-                           , IABC  OpReturn 0 2 0 -- return lookup of x
-                           ],
-            constants =    [ ],
-            functions =    [ lookupEnv inx ]}
+genEval (Atom x) = LuaFunc{ startline=2, endline=2, upvals=1,
+                                params=0, vararg=0, maxstack=1,
+          instructions = [ IABx  OpClosure 0 0 -- closure to look up x
+                         , IABC  OpGetUpVal 0 0 0 -- pass env table as upval
+                         , IABC  OpCall 0 1 2 -- call lookup closure
+                         , IABC  OpReturn 0 2 0 -- return lookup of x
+                         ],
+          constants =    [ ],
+          functions =    [ lookupEnv x ]}
 
-genEval t (List [Atom "define", Atom x, f]) = 
-                    let inx = M.findWithDefault 0 x t
-                    in  LuaFunc{ startline=3, endline=3, upvals=1,
+genEval (List [Atom "define", Atom x, f]) = 
+                    LuaFunc{ startline=3, endline=3, upvals=1,
                                  params=0, vararg=0, maxstack=3,
             instructions = [ IABC  OpNewTable 0 0 0 -- new env table
                            , IABC  OpGetUpVal 1 0 0 -- old env table to reg 1
@@ -64,24 +62,22 @@ genEval t (List [Atom "define", Atom x, f]) =
                            , IABC  OpSetTable 1 256 2 -- set x in old table
                            , IABC  OpReturn 0 1 0 -- return nothing
                            ],
-            constants =    [ LuaNumber . fromIntegral $ inx
+            constants =    [ LuaString x
                            , LuaNumber 0
                            ],
-            functions =    [genEval t f]}
+            functions =    [genEval f]}
 
-genEval t (List [Atom "lambda", List vars, f]) = 
-  let nvars = length vars
-      inxs  = map (\(Atom x) -> M.findWithDefault 0 x t) vars
-  in LuaFunc{ startline=4, endline=4, upvals=1, params=0, vararg=0, 
-              maxstack = 1,
-    instructions = [ IABx  OpClosure 0 0 -- closure that evaluates f with params
+genEval (List [Atom "lambda", List vars, f]) = 
+  LuaFunc{ startline=4, endline=4, upvals=1, 
+           params=0, vararg=0, maxstack = 1,
+    instructions = [ IABx  OpClosure 0 0 -- closure that evals f with params
                    , IABC  OpGetUpVal 0 0 0 -- pass env table
                    , IABC  OpReturn 0 2 0 -- return the closure
                    ],
     constants    = [],
-    functions    = [genLambda t vars f]}
+    functions    = [genLambda vars f]}
 
-genEval t (List [Atom "if", cond, exp1, exp2]) = 
+genEval (List [Atom "if", cond, exp1, exp2]) = 
     LuaFunc{ startline=4, endline=4, upvals=1, params=0, vararg=0, 
               maxstack = 4,
     instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
@@ -107,9 +103,9 @@ genEval t (List [Atom "if", cond, exp1, exp2]) =
                    , IABC  OpReturn 2 2 0
                    ],
     constants    = [ LuaNumber 0 ],
-    functions    = [ genEval t cond, genEval t exp1, genEval t exp2 ]}
+    functions    = [ genEval cond, genEval exp1, genEval exp2 ]}
 
-genEval t (List [Atom "register-global", Atom x]) =
+genEval (List [Atom "register-global", Atom x]) =
   LuaFunc{ startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
     instructions = [ IABx  OpClosure 0 0
                    , IABC  OpGetUpVal 0 0 0
@@ -118,9 +114,9 @@ genEval t (List [Atom "register-global", Atom x]) =
                    , IABC  OpReturn 0 1 0
                    ],
     constants    = [ LuaString x ],
-    functions    = [ genEval t (Atom x) ]}
+    functions    = [ genEval (Atom x) ]}
 
-genEval t (List (f:xs)) = let nvars = length xs
+genEval (List (f:xs)) = let nvars = length xs
  in 
     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
               maxstack = fromIntegral nvars + 3,
@@ -137,17 +133,16 @@ genEval t (List (f:xs)) = let nvars = length xs
                       , IABC  OpReturn 2 2 0
                       ],
       constants =    [ LuaNumber 0 ],
-      functions =    genEval t f : map (genEval t) xs}
+      functions =    genEval f : map genEval xs}
 
 -- | `genLambda` takes a list of `Atom`s (as `Value`s) and a `Value` containing
 -- those `Atom`s. It creates a chunk which takes a parameter for each value, 
 -- binds each parameter to the corresponding `Atom` and the evaluates the final
 -- `Value`.
 --
-genLambda :: AtomTable -> [Value] -> Value -> LuaFunc
-genLambda t vars f = 
+genLambda :: [Value] -> Value -> LuaFunc
+genLambda vars f = 
   let nvars = length vars
-      inxs = map (\(Atom x) -> M.findWithDefault 0 x t) vars
   in  
                   LuaFunc{ startline=5, endline=5, upvals=1, 
                            params = fromIntegral nvars, vararg=0, 
@@ -165,16 +160,16 @@ genLambda t vars f =
                      , IABC  OpCall (nvars+1) 1 2 -- eval f
                      , IABC  OpReturn (nvars+1) 2 0
                      ],
-      constants    = map (LuaNumber . fromIntegral) inxs ++ [LuaNumber 0], 
-      functions    = [genEval t f]}
+      constants    = map (\(Atom x) -> LuaString x) vars ++ [LuaNumber 0], 
+      functions    = [genEval f]}
 
 -- |Takes two params, second is a table.
 -- Looks up index n in the table and if it is nil return (lookup 0, lookup 0)
 -- if the value is not nil return (nil, val)
 -- The idea is that 0 points to the next environment up so we could call again
 --
-lookupOnce :: Int -> LuaFunc
-lookupOnce n = LuaFunc { startline=0, endline=0, upvals=0, params=2,
+lookupOnce :: String -> LuaFunc
+lookupOnce s = LuaFunc { startline=0, endline=0, upvals=0, params=2,
                             vararg=0, maxstack=5,
      instructions    = [ IABC  OpLoadNil 2 2 0 -- nil in reg 2
                        , IABC  OpGetTable 3 1 256 -- lookup result -> reg 3
@@ -187,7 +182,7 @@ lookupOnce n = LuaFunc { startline=0, endline=0, upvals=0, params=2,
                        , IABC  OpLoadNil 3 3 0 -- load nill in reg 3
                        , IABC  OpReturn 3 3 0 -- return reg 3 and 4
                        ],
-     constants       = [ LuaNumber . fromIntegral $ n
+     constants       = [ LuaString s
                        , LuaNumber 0 ],
      functions       = []}
 
@@ -195,8 +190,8 @@ lookupOnce n = LuaFunc { startline=0, endline=0, upvals=0, params=2,
 -- environments if nil. Returns nil if not present in any table. Should this be
 -- changed to lookup in global env if still nil?
 --
-lookupEnv :: Int -> LuaFunc
-lookupEnv n =  LuaFunc { startline=0, endline=0, upvals=1, params=0,
+lookupEnv :: String -> LuaFunc
+lookupEnv s =  LuaFunc { startline=0, endline=0, upvals=1, params=0,
                          vararg=0, maxstack=5, -- TForloop returns values in 3,4
         instructions = [ IABx  OpClosure 0 0 -- lookup once closure (iter func)
                        , IABC  OpLoadNil 1 1 0 -- state (nil when done)
@@ -207,10 +202,10 @@ lookupEnv n =  LuaFunc { startline=0, endline=0, upvals=1, params=0,
                        , IAsBx OpJmp 0 (-2) -- back to loop
                        , IABC  OpReturn 4 2 0 -- return register 4
                        ],
-        constants    = [ LuaNumber . fromIntegral $ n
+        constants    = [ LuaString s
                        , LuaNumber 0
                        ],
-        functions    = [lookupOnce n]}
+        functions    = [lookupOnce s]}
 
 -- |put the closure at index n in register 2, pass register 0 as upval and call 
 -- it without inputs
@@ -224,9 +219,9 @@ closeAndCall n = [ IABx  OpClosure 2 n
 -- | Generate the Lua chunk which evaluates each value and prints the final one
 --
 genProgram :: [Value] -> LuaFunc
-genProgram vs = let atable = M.fromList $ zip (nub $ foldMap getAtoms vs) [1..] 
-                  -- ^tables zip from 1 because 0 points to prev environment
-                    funcs = addPrim atable : map (genEval atable) vs
+genProgram vs = let atoms = nub $ foldMap getAtoms vs 
+                  -- ^list of atoms we'll use 
+                    funcs = addPrim atoms : map genEval vs
                     ins =   IABC OpNewTable 0 0 0 -- original env 
                           : IABx OpGetGlobal 1 0 -- print -> reg 1
                           : foldMap closeAndCall [0..length vs] -- eval vals 
@@ -370,12 +365,16 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              ]
 
-addPrim :: AtomTable -> LuaFunc
-addPrim t = 
-  let inxfunc = foldMap (\(x,f) -> maybeToList ((,) f <$> M.lookup x t)) 
-                  $ primitives -- table inx, function tuples
-      funcs = map fst inxfunc -- list of funcs
-      inxs = map (LuaNumber . fromIntegral . snd) inxfunc -- list of indexes
+addPrim :: [String] -> LuaFunc
+addPrim atoms = 
+  --     inxfunc = foldMap (\(x,f) -> maybeToList ((,) f <$> M.lookup x t)) 
+  --                 $ primitives -- table inx, function tuples
+  --     funcs = map fst inxfunc -- list of funcs
+  --     inxs = map (LuaNumber . fromIntegral . snd) inxfunc -- list of indexes
+  --     np = length funcs
+  let
+      usedPrims = filter ((`elem` atoms) . fst) primitives
+      (labels, funcs) = unzip usedPrims
       np = length funcs
   in  
     LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=2,
@@ -387,7 +386,7 @@ addPrim t =
                      ++
                      [ IABC  OpReturn 0 1 0 
                      ],
-      constants    = inxs,
+      constants    = map LuaString labels,
       functions    = funcs}
 
 ------------------------- Main IO -----------------------------
@@ -500,27 +499,17 @@ sumFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
 sampleFunc :: LuaFunc -- Example function to test
 sampleFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    maxstack=6, 
-                   instructions=[ IABx OpGetGlobal 0 0
-                                , IABx OpClosure 1 0
-                                , IABx OpLoadK 2 1
-                                , IABx OpLoadK 3 2
-                                , IABx OpLoadK 4 3
-                                , IABx OpLoadK 5 4
-                                , IABC OpCall 1 0 2
-                                , IABC OpCall 0 2 1
-                                --, IABC OpSetList 0 0 1
-                                --, IABx  OpGetGlobal 0 0
-                                --, IABx  OpClosure 1 0
-                                -- , IABx  OpLoadK 2 1
-                                -- , IABx  OpLoadK 3 2
-                                -- , IABx  OpLoadK 4 3
-                                -- , IABC  OpCall 1 4 2 
-                                -- , IABC  OpCall 0 2 1  
-                                , IABC  OpReturn 0 1 0 
+                   instructions=[ IABC OpNewTable 0 0 0
+                                , IABC OpSetTable 0 257 260
+                                , IABx OpGetGlobal 1 0
+                                , IABC OpGetTable 2 0 257
+                                , IABC OpCall 1 2 1
+                                , IABC OpReturn 0 1 0
                                 ], 
                    
                    constants=   [ 
                                   LuaString "print"
+                                , LuaString "foo"
                                 , LuaNumber 0
                                 , LuaNumber 1
                                 , LuaNumber 2

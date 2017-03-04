@@ -43,10 +43,6 @@ bytecodeParses s luafunc = do
   it (s ++ " valid bytecode") $ exitCode `shouldBe` ExitSuccess
   where outfile = "test/testfiles/temp.luac" 
 
-dummyLuaFunc :: Value -> LuaFunc
-dummyLuaFunc v = let atable = M.fromList $ zip (nub $ getAtoms v) [1..]
-                 in  genEval atable v
-
 main :: IO ()
 main = hspec $ do
   testFiles <- runIO $ do
