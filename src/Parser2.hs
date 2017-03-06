@@ -9,8 +9,8 @@ import qualified Data.Set as S
 import qualified Data.Map as M
 
 data Token = Identifier String 
-           | Boolean Bool
-           | Number Double 
+           | Boolean' Bool
+           | Number' Double 
            | Character Char
            | String String
            | LeftPar 
@@ -66,9 +66,9 @@ parToken =   fmap Identifier parIdent
          <|> fmap Other (string "#(")
          <|> fmap Other (string ",@")
           where
-            boolConv "#f" = Boolean False
-            boolConv "#t" = Boolean True
-            numConv = Number . read
+            boolConv "#f" = Boolean' False
+            boolConv "#t" = Boolean' True
+            numConv = Number' . read
             charConv "space" = Character ' '
             charConv "newline" = Character '\n'
             charConv (['#', '\\', x]) = Character x
@@ -135,13 +135,13 @@ parLit = fmap Literal (try $
               if lit x then return (conv x) else empty
          ) <|> unexpected "Not a literal"
          where
-            lit (Boolean _) = True
-            lit (Number _) = True
+            lit (Boolean' _) = True
+            lit (Number' _) = True
             lit (Character _) = True
             lit (String _) = True
             lit _ = False
-            conv (Boolean x) = LitBool x
-            conv (Number x) = LitNum x
+            conv (Boolean' x) = LitBool x
+            conv (Number' x) = LitNum x
             conv (Character x) = LitChar x
             conv (String x) = LitStr x
 
