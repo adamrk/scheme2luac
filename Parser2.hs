@@ -2,9 +2,11 @@ module Parser2 where
 
 import Text.Trifecta
 import Data.Char (isSpace, isAlpha, isAscii, isPrint)
-import Data.List (intercalate)
+import Data.List (intercalate, scanl')
 import Control.Applicative ((<|>), empty, liftA2, liftA3)
 import Data.List (nub)
+import qualified Data.Set as S
+import qualified Data.Map as M
 
 data Token = Identifier String 
            | Boolean Bool
@@ -95,6 +97,28 @@ data Def = Def1 Expr Expr
 
 data Body = Body [Def] [Expr]
             deriving (Eq, Show)
+
+data CommOrDef = Comm Expr | Def Def deriving (Eq, Show)
+
+type VarT = M.Map String Int
+
+data AnnExpr = AVar String VarT
+             | ALiteral Lit
+             | ACall AnnExpr [AnnExpr]
+             | ALambda [Expr] AnnBody
+             | ACond AnnExpr AnnExpr AnnExpr
+             | AAssign Expr AnnExpr
+               deriving (Eq, Show)
+
+data AnnDef = ADef1 Expr AnnExpr
+            | ADef2 Expr [Expr] AnnBody
+            | ADef3 [AnnDef]
+              deriving (Eq, Show)
+
+data AnnBody = ABody [AnnDef] [AnnExpr]
+               deriving (Eq, Show)
+
+data AnnCommOrDef = AComm AnnExpr | ADef AnnDef deriving (Eq, Show)
 
 parExpr :: Parser Expr
 parExpr = parVar 
@@ -196,10 +220,12 @@ parDef = (<|> unexpected "not a definition" ) $ try $ do
       formals <- many (token parVar)
       token parRight
       body <- parBody
+      parRight
       return (Def2 v formals body)))
   else (if x /= "begin" then empty else 
     do
       defs <- many (token parDef)
+      parRight
       return (Def3 defs) )
 
 parCond :: Parser Expr
@@ -223,8 +249,78 @@ parAssign = (<|> unexpected "not an assignment") $ try $ do
     parRight
     return $ Assign var expr
 
-data CommOrDef = Comm Expr | Def Def deriving (Eq, Show)
-
 parProgram :: Parser [CommOrDef]
 parProgram = many $ try (fmap Comm $ token parExpr) 
                     <|> (fmap Def $ token parDef)
+
+definedVars :: Def -> S.Set String
+definedVars (Def1 (Var s) _) = S.singleton s
+definedVars (Def2 (Var s) _ _) = S.singleton s
+definedVars (Def3 ds) = foldMap definedVars ds
+
+freeInDef :: Def -> S.Set String
+freeInDef (Def1 _ e) = freeVarsEx e
+freeInDef (Def2 _ es b) = freeVars b `S.difference` foldMap freeVarsEx es
+freeInDef (Def3 es) = foldMap freeInDef es
+
+freeVarsEx :: Expr -> S.Set String
+freeVarsEx (Var s) = S.singleton s
+freeVarsEx (Literal _) = S.empty
+freeVarsEx (Call a b) = S.union (freeVarsEx a) (foldMap freeVarsEx b)
+freeVarsEx (Lambda vars body) = S.difference (freeVars body) 
+                                  (foldMap freeVarsEx vars)
+freeVarsEx (Cond x y z) = foldMap freeVarsEx [x, y, z]
+freeVarsEx (Assign a b) = S.union (freeVarsEx a) (freeVarsEx b)
+
+freeVars :: Body -> S.Set String
+freeVars (Body defs exprs) = S.union (foldMap freeVarsEx exprs)
+                                   (foldMap freeInDef defs)
+                             `S.difference` foldMap definedVars defs
+
+topDefined :: [CommOrDef] -> VarT
+topDefined xs = foldr helper (M.fromList []) (map getVars xs)
+  where
+    helper ::S.Set String -> M.Map String Int -> M.Map String Int
+    helper s m = M.union m (M.fromList $ zip (S.toList s) [0,0..])
+    getVars :: CommOrDef -> S.Set String
+    getVars (Comm _) = S.empty
+    getVars (Def d) = definedVars d
+
+annotateEx :: VarT -> Expr -> AnnExpr
+annotateEx t (Var s) = AVar s t
+annotateEx _ (Literal x) = ALiteral x
+annotateEx t (Call f xs) = ACall (annotateEx t f) (map (annotateEx t) xs)
+annotateEx t (Lambda es b) = ALambda es (annotateBody newt b)
+  where
+    newt = M.unionWith min 
+            ((+1) <$> t) 
+            (M.fromList $ zip (S.toList $ foldMap freeVarsEx es) [0,0..])  
+annotateEx t (Cond a b c) = ACond (annotateEx t a) (annotateEx t b)
+                                                   (annotateEx t c)
+annotateEx t (Assign a b) = AAssign a (annotateEx t b)
+
+annotateBody :: VarT -> Body -> AnnBody
+annotateBody t (Body ds es) = ABody (map (annotateDef newt) ds) 
+                                    (map (annotateEx newt) es)
+  where
+    newt = M.unionWith min t
+            (M.fromList $ zip (S.toList $ foldMap definedVars ds) [0,0..])
+
+annotateDef :: VarT -> Def -> AnnDef
+annotateDef t (Def1 a b) = ADef1 a (annotateEx t b)
+annotateDef t (Def2 a b c) = ADef2 a b (annotateBody newt c)
+  where
+    newt = M.unionWith min 
+             ((+1) <$> t)
+             (M.fromList $ zip (S.toList $ foldMap freeVarsEx b) [0,0..])
+annotateDef t (Def3 ds) = ADef3 $ map (annotateDef newt) ds
+  where
+    newt = M.unionWith min t
+            (M.fromList $ zip (S.toList $ foldMap definedVars ds) [0,0..])
+
+annotateProgram :: VarT -> [CommOrDef] -> [AnnCommOrDef]
+annotateProgram t xs = map (ann newt) xs
+  where
+    ann t (Def d) = ADef $ annotateDef t d
+    ann t (Comm e) = AComm $ annotateEx t e
+    newt = M.unionWith min t (topDefined xs)
