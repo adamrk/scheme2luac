@@ -73,52 +73,44 @@ parToken =   fmap Identifier parIdent
             charConv "newline" = Character '\n'
             charConv (['#', '\\', x]) = Character x
 
-data Expr = Var String
-          | Literal Lit
-          | Call Expr [Expr]
-          | Lambda [Expr] Body 
-          | Cond Expr Expr Expr
-          | Assign Expr Expr
-          | DerivedExpr
-          | MacroUse
-          | MacroBlock
-           deriving (Eq, Show)
-
 data Lit = LitBool Bool
          | LitNum Double
          | LitChar Char
          | LitStr String
           deriving (Eq, Show)
 
-data Def = Def1 Expr Expr
-         | Def2 Expr [Expr] Body
-         | Def3 [Def]
-          deriving (Eq, Show)
+data GenExpr a = Var String a
+          | Literal Lit
+          | Call (GenExpr a) [GenExpr a]
+          | Lambda [GenExpr ()] (GenBody a) 
+          | Cond (GenExpr a) (GenExpr a) (GenExpr a)
+          | Assign (GenExpr ()) (GenExpr a)
+          | DerivedExpr
+          | MacroUse
+          | MacroBlock
+           deriving (Eq, Show)
 
-data Body = Body [Def] [Expr]
-            deriving (Eq, Show)
+data GenDef a = Def1 (GenExpr ()) (GenExpr a)
+            | Def2 (GenExpr ()) [GenExpr ()] (GenBody a)
+            | Def3 [GenDef a]
+              deriving (Eq, Show)
 
-data CommOrDef = Comm Expr | Def Def deriving (Eq, Show)
+data GenBody a = Body [GenDef a] [GenExpr a] deriving (Eq, Show)
+
+data GenCommOrDef a = Comm (GenExpr a) | Def (GenDef a) deriving (Eq, Show)
 
 type VarT = M.Map String Int
 
-data AnnExpr = AVar String VarT
-             | ALiteral Lit
-             | ACall AnnExpr [AnnExpr]
-             | ALambda [Expr] AnnBody
-             | ACond AnnExpr AnnExpr AnnExpr
-             | AAssign Expr AnnExpr
-               deriving (Eq, Show)
+type Expr = GenExpr ()
+type Def = GenDef ()
+type Body = GenBody ()
+type CommOrDef = GenCommOrDef ()
+type AnnExpr = GenExpr VarT
+type AnnDef = GenDef VarT 
+type AnnBody = GenBody VarT
+type AnnCommOrDef = GenCommOrDef VarT
 
-data AnnDef = ADef1 Expr AnnExpr
-            | ADef2 Expr [Expr] AnnBody
-            | ADef3 [AnnDef]
-              deriving (Eq, Show)
 
-data AnnBody = ABody [AnnDef] [AnnExpr]
-               deriving (Eq, Show)
-
-data AnnCommOrDef = AComm AnnExpr | ADef AnnDef deriving (Eq, Show)
 
 parExpr :: Parser Expr
 parExpr = parVar 
@@ -181,7 +173,7 @@ parVar = try $ do
             x <- parToken
             case x of
               Identifier s -> if not (s `elem` synKeywords) 
-                                then return (Var s)
+                                then return (Var s ())
                                 else empty
               _ -> empty
          <|> unexpected "expected variable"               
@@ -253,18 +245,18 @@ parProgram :: Parser [CommOrDef]
 parProgram = many $ try (fmap Comm $ token parExpr) 
                     <|> (fmap Def $ token parDef)
 
-definedVars :: Def -> S.Set String
-definedVars (Def1 (Var s) _) = S.singleton s
-definedVars (Def2 (Var s) _ _) = S.singleton s
+definedVars :: GenDef a -> S.Set String
+definedVars (Def1 (Var s _) _) = S.singleton s
+definedVars (Def2 (Var s _) _ _) = S.singleton s
 definedVars (Def3 ds) = foldMap definedVars ds
 
-freeInDef :: Def -> S.Set String
+freeInDef :: GenDef a -> S.Set String
 freeInDef (Def1 _ e) = freeVarsEx e
 freeInDef (Def2 _ es b) = freeVars b `S.difference` foldMap freeVarsEx es
 freeInDef (Def3 es) = foldMap freeInDef es
 
-freeVarsEx :: Expr -> S.Set String
-freeVarsEx (Var s) = S.singleton s
+freeVarsEx :: GenExpr a -> S.Set String
+freeVarsEx (Var s _) = S.singleton s
 freeVarsEx (Literal _) = S.empty
 freeVarsEx (Call a b) = S.union (freeVarsEx a) (foldMap freeVarsEx b)
 freeVarsEx (Lambda vars body) = S.difference (freeVars body) 
@@ -272,60 +264,60 @@ freeVarsEx (Lambda vars body) = S.difference (freeVars body)
 freeVarsEx (Cond x y z) = foldMap freeVarsEx [x, y, z]
 freeVarsEx (Assign a b) = S.union (freeVarsEx a) (freeVarsEx b)
 
-freeVars :: Body -> S.Set String
+freeVars :: GenBody a -> S.Set String
 freeVars (Body defs exprs) = S.union (foldMap freeVarsEx exprs)
                                    (foldMap freeInDef defs)
                              `S.difference` foldMap definedVars defs
 
-topDefined :: [CommOrDef] -> VarT
+topDefined :: [GenCommOrDef a] -> VarT
 topDefined xs = foldr helper (M.fromList []) (map getVars xs)
   where
     helper ::S.Set String -> M.Map String Int -> M.Map String Int
     helper s m = M.union m (M.fromList $ zip (S.toList s) [0,0..])
-    getVars :: CommOrDef -> S.Set String
+    getVars :: GenCommOrDef a -> S.Set String
     getVars (Comm _) = S.empty
     getVars (Def d) = definedVars d
 
-annotateEx :: VarT -> Expr -> AnnExpr
-annotateEx t (Var s) = AVar s t
-annotateEx _ (Literal x) = ALiteral x
-annotateEx t (Call f xs) = ACall (annotateEx t f) (map (annotateEx t) xs)
-annotateEx t (Lambda es b) = ALambda es (annotateBody newt b)
+annotateEx :: VarT -> GenExpr a -> AnnExpr
+annotateEx t (Var s _) = Var s t
+annotateEx _ (Literal x) = Literal x
+annotateEx t (Call f xs) = Call (annotateEx t f) (map (annotateEx t) xs)
+annotateEx t (Lambda es b) = Lambda es (annotateBody newt b)
   where
     newt = M.unionWith min 
             ((+1) <$> t) 
             (M.fromList $ zip (S.toList $ foldMap freeVarsEx es) [0,0..])  
-annotateEx t (Cond a b c) = ACond (annotateEx t a) (annotateEx t b)
+annotateEx t (Cond a b c) = Cond (annotateEx t a) (annotateEx t b)
                                                    (annotateEx t c)
-annotateEx t (Assign a b) = AAssign a (annotateEx t b)
+annotateEx t (Assign a b) = Assign a (annotateEx t b)
 
-annotateBody :: VarT -> Body -> AnnBody
-annotateBody t (Body ds es) = ABody (map (annotateDef newt) ds) 
-                                    (map (annotateEx newt) es)
+annotateBody :: VarT -> GenBody a -> AnnBody
+annotateBody t (Body ds es) = Body (map (annotateDef newt) ds) 
+                                   (map (annotateEx newt) es)
   where
     newt = M.unionWith min t
             (M.fromList $ zip (S.toList $ foldMap definedVars ds) [0,0..])
 
-annotateDef :: VarT -> Def -> AnnDef
-annotateDef t (Def1 a b) = ADef1 a (annotateEx t b)
-annotateDef t (Def2 a b c) = ADef2 a b (annotateBody newt c)
+annotateDef :: VarT -> GenDef a -> AnnDef
+annotateDef t (Def1 a b) = Def1 a (annotateEx t b)
+annotateDef t (Def2 a b c) = Def2 a b (annotateBody newt c)
   where
     newt = M.unionWith min 
              ((+1) <$> t)
              (M.fromList $ zip (S.toList $ foldMap freeVarsEx b) [0,0..])
-annotateDef t (Def3 ds) = ADef3 $ map (annotateDef newt) ds
+annotateDef t (Def3 ds) = Def3 $ map (annotateDef newt) ds
   where
     newt = M.unionWith min t
             (M.fromList $ zip (S.toList $ foldMap definedVars ds) [0,0..])
 
-annotateProgram :: VarT -> [CommOrDef] -> [AnnCommOrDef]
+annotateProgram :: VarT -> [GenCommOrDef a] -> [AnnCommOrDef]
 annotateProgram t xs = map (ann newt) xs
   where
-    ann t (Def d) = ADef $ annotateDef t d
-    ann t (Comm e) = AComm $ annotateEx t e
+    ann t (Def d) = Def $ annotateDef t d
+    ann t (Comm e) = Comm $ annotateEx t e
     newt = M.unionWith min t (topDefined xs)
 
-allVars :: [CommOrDef] -> S.Set String
+allVars :: [GenCommOrDef a] -> S.Set String
 allVars = foldMap getFree
   where
     getFree (Comm x) = freeVarsEx x

@@ -11,8 +11,10 @@ import Data.Maybe (maybeToList, isJust)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
--- finish the different types of define !!!!!!!!!!!!!!!!1
-
+-- | Lua chunk that takes 3 parameters: environment table, variable string, and 
+-- the number of environments to go up. It returns the value at the string in that
+-- environment.
+--
 luaLookup :: LuaFunc
 luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0, 
                       maxstack=8,
@@ -32,8 +34,13 @@ luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0,
     functions =       []
                     } 
 
+-- | Converts an annotated scheme expression into a Lua chunk. The chunk takes no
+-- parameters and a single upval which is the evaluation environment. When called 
+-- the chunk will return the value that the expression evaluates to.
+--
 toFunc :: AnnExpr -> LuaFunc
-toFunc (AVar s t) 
+toFunc (Var s t) 
+      -- | inx tell us how many scopes out to look for s
   | isJust inx = let Just n = inx
                  in  LuaFunc { startline=0, endline=0, upvals=1, params=0,
                               vararg=0, maxstack=4,
@@ -51,6 +58,7 @@ toFunc (AVar s t)
                               ],
         functions =           [] }
   | otherwise = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
+    -- ^ if there is no indicated scope, assume it is a global func
                           maxstack=1,
         instructions =    [ IABx  OpGetGlobal 0 0
                           , IABC  OpReturn 0 2 0
@@ -60,7 +68,7 @@ toFunc (AVar s t)
   where
     inx = M.lookup s t
 
-toFunc (ALiteral (LitBool b)) =
+toFunc (Literal (LitBool b)) =
   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
     instructions = [ IABC  OpLoadBool 0 (if b then 1 else 0) 0
                    , IABC  OpReturn 0 2 0
@@ -68,7 +76,7 @@ toFunc (ALiteral (LitBool b)) =
     constants =    [],
     functions =    []}
 
-toFunc (ALiteral (LitNum n)) = 
+toFunc (Literal (LitNum n)) = 
   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
     instructions = [ IABx  OpLoadK 0 0
                    , IABC  OpReturn 0 2 0
@@ -76,7 +84,7 @@ toFunc (ALiteral (LitNum n)) =
     constants =    [ LuaNumber n ],
     functions =    []}
 
-toFunc (ALiteral (LitChar c)) = 
+toFunc (Literal (LitChar c)) = 
   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
     instructions = [ IABx  OpLoadK 0 0
                    , IABC  OpReturn 0 2 0
@@ -84,7 +92,7 @@ toFunc (ALiteral (LitChar c)) =
     constants =    [ LuaString [c] ],
     functions =    []}
 
-toFunc (ALiteral (LitStr s)) = 
+toFunc (Literal (LitStr s)) = 
   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
     instructions = [ IABx  OpLoadK 0 0
                    , IABC  OpReturn 0 2 0
@@ -92,7 +100,7 @@ toFunc (ALiteral (LitStr s)) =
     constants =    [ LuaString s ],
     functions =    []}
 
-toFunc (ACall f xs) = let nvars = length xs
+toFunc (Call f xs) = let nvars = length xs
  in 
     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
               maxstack = fromIntegral nvars + 3,
@@ -108,7 +116,7 @@ toFunc (ACall f xs) = let nvars = length xs
       constants =    [],
       functions =    toFunc f : map toFunc xs}
 
-toFunc (ALambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1, 
+toFunc (Lambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1, 
                                  params=0, vararg=0, maxstack = 1,
     instructions = [ IABx  OpClosure 0 0 -- closure that evals f with params
                    , IABC  OpGetUpVal 0 0 0 -- pass env table
@@ -117,7 +125,7 @@ toFunc (ALambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1,
     constants    = [],
     functions    = [toFuncLambda vs b]}
 
-toFunc (ACond a b c) = LuaFunc{ startline=4, endline=4, upvals=1, params=0, 
+toFunc (Cond a b c) = LuaFunc{ startline=4, endline=4, upvals=1, params=0, 
                                 vararg=0, maxstack = 4,
     instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
                    , IABx  OpClosure 1 0 -- cond closure
@@ -138,9 +146,13 @@ toFunc (ACond a b c) = LuaFunc{ startline=4, endline=4, upvals=1, params=0,
     constants    = [ LuaNumber 0 ],
     functions    = [ toFunc a, toFunc b, toFunc c ]}
 
-toFunc (AAssign _ _) = undefined
+toFunc (Assign _ _) = undefined
+-- ^ Still need to do this!!!!!!!
 
-
+-- |Turn a lambda into a lua chunk. The funcion takes one parameter for each 
+-- variable, binds them to the corresponding names in the environment and then
+--   evaluates the body.
+--
 toFuncLambda :: [Expr] -> AnnBody -> LuaFunc
 toFuncLambda vars f = let nvars = length vars
   in  
@@ -149,8 +161,8 @@ toFuncLambda vars f = let nvars = length vars
                            maxstack = fromIntegral nvars + 2,
       instructions = [ IABC  OpNewTable nvars 0 0 -- new env after params
                      , IABC  OpGetUpVal (nvars+1) 0 0 -- old env
-                     , IABC  OpSetTable nvars (nvars+256) (nvars+1)
-                         -- ^ point new env to old
+                     , IABC  OpSetTable nvars (nvars+256) (nvars+1) 
+                         -- point new env to old
                      ] ++
                         (map (\x -> IABC OpSetTable nvars (256+x) x)
                         -- ^ set params in new env 
@@ -160,23 +172,29 @@ toFuncLambda vars f = let nvars = length vars
                      , IABC  OpCall (nvars+1) 1 2 -- eval f
                      , IABC  OpReturn (nvars+1) 2 0
                      ],
-      constants    = map (\(Var x) -> LuaString x) vars ++ [LuaNumber 0], 
+      constants    = map (\(Var x _) -> LuaString x) vars ++ [LuaNumber 0], 
       functions    = [toFuncBody f]}
 
+-- |The lua chunk that evaluates a body simply evaluates each def or expr in turn 
+-- and then returns the last one.
+--
 toFuncBody :: AnnBody -> LuaFunc
-toFuncBody (ABody ds es) = LuaFunc{ startline=0, endline=0, upvals=1, params=0,
+toFuncBody (Body ds es) = LuaFunc{ startline=0, endline=0, upvals=1, params=0,
                                     vararg=0, maxstack=1,
             instructions = concatMap (\i -> 
-                             [ IABx  OpClosure 0 i 
-                             , IABC  OpGetUpVal 0 0 0
+                             [ IABx  OpClosure 0 i -- get def or expr
+                             , IABC  OpGetUpVal 0 0 0 -- pass env
                              , IABC  OpCall 0 1 2
                              ]) [0..length ds + length es - 1]
                           ++ [ IABC  OpReturn 0 2 0],
             constants    = [],
             functions    = map toFuncDef ds ++ map toFunc es}
 
+-- |Turn a def into a lua chunk by evaluating the expression and then binding it
+-- to the proper variable name in the current environment.
+-- 
 toFuncDef :: AnnDef -> LuaFunc
-toFuncDef (ADef1 (Var x) e) = LuaFunc{ startline=3, endline=3, upvals=1,
+toFuncDef (Def1 (Var x _) e) = LuaFunc{ startline=3, endline=3, upvals=1,
                                  params=0, vararg=0, maxstack=2,
             instructions = [ IABC  OpGetUpVal 0 0 0 -- get env
                            , IABx  OpClosure 1 0 -- closure to evaluate e
@@ -187,14 +205,15 @@ toFuncDef (ADef1 (Var x) e) = LuaFunc{ startline=3, endline=3, upvals=1,
                            ],
             constants =    [ LuaString x ],
             functions =    [ toFunc e ]}
-toFuncDef (ADef2 x vs b) = toFuncDef $ ADef1 x (ALambda vs b)
-toFuncDef (ADef3 ds) = LuaFunc{ startline=0, endline=0, upvals=1,
+toFuncDef (Def2 x vs b) = toFuncDef $ Def1 x (Lambda vs b)
+toFuncDef (Def3 ds) = LuaFunc{ startline=0, endline=0, upvals=1,
                                 params=0, vararg=0, maxstack=1,
           instructions = concatMap (\n -> 
                             [ IABx OpClosure 0 n -- get def closure
-                            , IABC OpMove 0 0 0 -- pass env
+                            , IABC OpGetUpVal 0 0 0 -- pass env
                             , IABC OpCall 0 1 1 -- call closure
-                            ]) [0..length ds - 1],
+                            ]) [0..length ds - 1]
+                         ++ [ IABC OpReturn 0 1 0 ],
           constants =    [],
           functions =    map toFuncDef ds} 
 
@@ -213,12 +232,12 @@ toFuncProgram xs = LuaFunc{ startline=0, endline=0, upvals=0, params=0,
         functions =    map tofunc axs ++ map snd globals 
       }
   where
-    axs = annotateProgram (M.fromList []) xs
-    freeVars = allVars xs
+    axs = annotateProgram (M.fromList []) xs -- annotate the parse tree
+    freeVars = allVars xs -- search for free variables
     globals = ("var_lookup", luaLookup) 
-      : filter ((`S.member` freeVars) . fst) primitives
-    tofunc (AComm x) = toFunc x
-    tofunc (ADef x) = toFuncDef x
+      : filter ((`S.member` freeVars) . fst) primitives -- add needed prims
+    tofunc (Comm x) = toFunc x
+    tofunc (Def x) = toFuncDef x
     createAndCall n = [ IABx OpClosure 2 n
                       , IABC OpMove 0 0 0
                       , IABC OpCall 2 1 2
