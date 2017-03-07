@@ -24,7 +24,7 @@ fileExCompare s =
           do 
             a <- runIO $ readCreateProcess (shell $ "scheme < " ++ s) ""
             b <- runIO $ do
-              f <- compileFromFile s
+              f <- compileFromFile M1 s
               case f >>= finalBuilder of
                 Just bs -> writeBuilder outfile bs
                 Nothing -> print "assembly error"

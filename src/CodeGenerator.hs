@@ -14,16 +14,16 @@ import qualified Data.Set as S
 -- finish the different types of define !!!!!!!!!!!!!!!!1
 
 luaLookup :: LuaFunc
-luaLookup = LuaFunc { startline=0, endline=0, upvals=1, params=2, vararg=0, 
-                      maxstack=7,
-    instructions =    [ IABx  OpLoadK 2 1 -- 1 for init
-                      , IABC  OpMove 3 1 0 -- 2nd param for limit
-                      , IABx  OpLoadK 4 1 -- 1 for step
-                      , IABC  OpGetUpVal 6 0 0 -- env table from upval
-                      , IAsBx OpForPrep 2 1 
-                      , IABC  OpGetTable 6 6 256 -- get next environment
-                      , IAsBx OpForLoop 2 (-2)
-                      , IABC  OpGetTable 0 6 0 -- lookup 1st param
+luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0, 
+                      maxstack=8,
+    instructions =    [ IABx  OpLoadK 3 1 -- 1 for init
+                      , IABC  OpMove 4 2 0 -- 3rd param for limit
+                      , IABx  OpLoadK 5 1 -- 1 for step
+                      , IABC  OpMove 7 0 0 -- env table from 1st param
+                      , IAsBx OpForPrep 3 1 
+                      , IABC  OpGetTable 7 7 256 -- get next environment
+                      , IAsBx OpForLoop 3 (-2)
+                      , IABC  OpGetTable 0 7 1 -- lookup 2nd param
                       , IABC  OpReturn 0 2 0
                       ],
     constants =       [ LuaNumber 0
@@ -36,18 +36,20 @@ toFunc :: AnnExpr -> LuaFunc
 toFunc (AVar s t) 
   | isJust inx = let Just n = inx
                  in  LuaFunc { startline=0, endline=0, upvals=1, params=0,
-                              vararg=0, maxstack=3,
-        instructions =        [ IABx  OpClosure 0 0 -- lookup closure
-                              , IABC  OpGetUpVal 0 0 0 -- pass env
-                              , IABx  OpLoadK 1 0 -- load the variable name
-                              , IABx  OpLoadK 2 1 -- load # envs up
-                              , IABC  OpCall 0 3 2
+                              vararg=0, maxstack=4,
+        instructions =        [ IABx  OpGetGlobal 0 2 -- lookup closure
+                              , IAsBx OpJmp 0 0
+                              , IABC  OpGetUpVal 1 0 0 -- pass env
+                              , IABx  OpLoadK 2 0 -- load the variable name
+                              , IABx  OpLoadK 3 1 -- load # envs up
+                              , IABC  OpCall 0 4 2
                               , IABC  OpReturn 0 2 0
                               ],
         constants =           [ LuaString s 
                               , LuaNumber . fromIntegral $ n
+                              , LuaString "var_lookup"
                               ],
-        functions =           [ luaLookup ] }
+        functions =           [] }
   | otherwise = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
                           maxstack=1,
         instructions =    [ IABx  OpGetGlobal 0 0
@@ -185,6 +187,16 @@ toFuncDef (ADef1 (Var x) e) = LuaFunc{ startline=3, endline=3, upvals=1,
                            ],
             constants =    [ LuaString x ],
             functions =    [ toFunc e ]}
+toFuncDef (ADef2 x vs b) = toFuncDef $ ADef1 x (ALambda vs b)
+toFuncDef (ADef3 ds) = LuaFunc{ startline=0, endline=0, upvals=1,
+                                params=0, vararg=0, maxstack=1,
+          instructions = concatMap (\n -> 
+                            [ IABx OpClosure 0 n -- get def closure
+                            , IABC OpMove 0 0 0 -- pass env
+                            , IABC OpCall 0 1 1 -- call closure
+                            ]) [0..length ds - 1],
+          constants =    [],
+          functions =    map toFuncDef ds} 
 
 toFuncProgram :: [CommOrDef] -> LuaFunc
 toFuncProgram xs = LuaFunc{ startline=0, endline=0, upvals=0, params=0, 
@@ -203,7 +215,8 @@ toFuncProgram xs = LuaFunc{ startline=0, endline=0, upvals=0, params=0,
   where
     axs = annotateProgram (M.fromList []) xs
     freeVars = allVars xs
-    globals = filter ((`S.member` freeVars) . fst) primitives
+    globals = ("var_lookup", luaLookup) 
+      : filter ((`S.member` freeVars) . fst) primitives
     tofunc (AComm x) = toFunc x
     tofunc (ADef x) = toFuncDef x
     createAndCall n = [ IABx OpClosure 2 n
