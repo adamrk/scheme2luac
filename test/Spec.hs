@@ -47,8 +47,7 @@ main :: IO ()
 main = hspec $ do
   testFiles <- runIO $ do
       files <- listDirectory "test/testfiles"
-      return $ (map . map) ("test/testfiles/" ++)
-             . groupBy (\x y -> (takeWhile isAlpha x == takeWhile isAlpha y)) 
+      return $ groupBy (\x y -> (takeWhile isAlpha x == takeWhile isAlpha y)) 
              . sort 
              . filter ((== ".scm") . takeExtension) 
              $ files
@@ -58,4 +57,4 @@ main = hspec $ do
   where
     run xs = let name = takeWhile isAlpha (head xs)
              in  describe (name ++ " tests") $
-                    mapM_ (fileExCompare) xs
+                    mapM_ (fileExCompare . ("test/testfiles/" ++)) xs

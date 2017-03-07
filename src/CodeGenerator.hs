@@ -5,10 +5,13 @@ import Parser
 import Parser2
 import Data.Monoid
 import Data.List (foldl')
-import Text.Trifecta (parseFromFile, Result(Success, Failure))
+import Text.Trifecta (parseFromFile, Result(Success, Failure), parseString)
 import Data.List (nub)
-import Data.Maybe (maybeToList)
+import Data.Maybe (maybeToList, isJust)
 import qualified Data.Map as M
+import qualified Data.Set as S
+
+-- finish the different types of define !!!!!!!!!!!!!!!!1
 
 luaLookup :: LuaFunc
 luaLookup = LuaFunc { startline=0, endline=0, upvals=1, params=2, vararg=0, 
@@ -30,7 +33,9 @@ luaLookup = LuaFunc { startline=0, endline=0, upvals=1, params=2, vararg=0,
                     } 
 
 toFunc :: AnnExpr -> LuaFunc
-toFunc (AVar s t) = LuaFunc { startline=0, endline=0, upvals=1, params=0,
+toFunc (AVar s t) 
+  | isJust inx = let Just n = inx
+                 in  LuaFunc { startline=0, endline=0, upvals=1, params=0,
                               vararg=0, maxstack=3,
         instructions =        [ IABx  OpClosure 0 0 -- lookup closure
                               , IABC  OpGetUpVal 0 0 0 -- pass env
@@ -43,8 +48,15 @@ toFunc (AVar s t) = LuaFunc { startline=0, endline=0, upvals=1, params=0,
                               , LuaNumber . fromIntegral $ n
                               ],
         functions =           [ luaLookup ] }
+  | otherwise = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
+                          maxstack=1,
+        instructions =    [ IABx  OpGetGlobal 0 0
+                          , IABC  OpReturn 0 2 0
+                          ],
+        constants =       [ LuaString s ],
+        functions =       []}
   where
-    n = M.findWithDefault 100 s t
+    inx = M.lookup s t
 
 toFunc (ALiteral (LitBool b)) =
   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
@@ -174,7 +186,33 @@ toFuncDef (ADef1 (Var x) e) = LuaFunc{ startline=3, endline=3, upvals=1,
             constants =    [ LuaString x ],
             functions =    [ toFunc e ]}
 
-
+toFuncProgram :: [CommOrDef] -> LuaFunc
+toFuncProgram xs = LuaFunc{ startline=0, endline=0, upvals=0, params=0, 
+                            vararg=0, maxstack=3,
+        instructions = [ IABC OpNewTable 0 0 0 -- env table
+                       , IABx OpGetGlobal 1 0 -- print command
+                       ] 
+                       ++ concatMap regGlobal [0..length globals - 1] 
+                       ++ concatMap createAndCall [0..length xs - 1] ++
+                       [ IABC OpCall 1 2 1
+                       , IABC OpReturn 0 1 0
+                       ],
+        constants =    [ LuaString "print" ] ++ map (LuaString . fst) globals,
+        functions =    map tofunc axs ++ map snd globals 
+      }
+  where
+    axs = annotateProgram (M.fromList []) xs
+    freeVars = allVars xs
+    globals = filter ((`S.member` freeVars) . fst) primitives
+    tofunc (AComm x) = toFunc x
+    tofunc (ADef x) = toFuncDef x
+    createAndCall n = [ IABx OpClosure 2 n
+                      , IABC OpMove 0 0 0
+                      , IABC OpCall 2 1 2
+                      ]
+    regGlobal n = [ IABx OpClosure 2 (n + length xs)
+                  , IABx OpSetGlobal 2 (n + 1)
+                  ]
 
 -- | Converts a Scheme value into a Lua chunk. The chunk takes no parameters, 
 -- but expects a single upvalue which is a table of the defined atoms. Entry 0 
@@ -407,7 +445,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                 , IABx  OpLoadK 1 0 -- load 1 (loop init)
                                 , IABC  OpLen 2 0 0 -- load length (loop max)
                                 , IABx  OpLoadK 3 0 -- load 1 (loop step)
-                                , IABx  OpLoadK 5 0 -- first arg
+                                , IABx  OpLoadK 5 0 -- load unit
                                 , IAsBx OpForPrep 1 2 
                                 , IABC  OpGetTable 6 0 1 -- next arg
                                 , IABC  OpMul 5 5 6 -- product -> r5
@@ -550,20 +588,34 @@ addPrim atoms =
       constants    = map LuaString labels,
       functions    = funcs}
 
-------------------------- Main IO -----------------------------
+------------------------- Main Functions -----------------------------
+data Method = M1 | M2 deriving (Eq, Show)
 
-luafunc :: IO (Maybe LuaFunc)
-luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
+compileFromFile :: Method -> String -> IO (Maybe LuaFunc)
+compileFromFile M1 = (fmap . fmap) toFuncProgram . parseFromFile parProgram
+compileFromFile M2 = (fmap . fmap) genProgram . parseFromFile file
 
-compileFromFile :: String -> IO (Maybe LuaFunc)
-compileFromFile = (fmap . fmap) genProgram . parseFromFile file
+parseAndWrite :: Method -> String -> String -> IO ()
+parseAndWrite m inp out = compileFromFile m inp >>= writeLuaFunc out
 
+------------------------- Probably not for production ------------------------
 result2maybe :: Result a -> Maybe a
 result2maybe (Success x) = Just x
 result2maybe (Failure x) = Nothing
 
-------------------------- Probably not for production ------------------------
+luafunc :: IO (Maybe LuaFunc)
+luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
 
+writeLuaFunc :: String -> Maybe LuaFunc -> IO ()
+writeLuaFunc f ml = case ml >>= finalBuilder of
+                        Just bs -> writeBuilder f bs
+                        Nothing -> print "error completing builder"
+
+string2File :: String -> String -> IO ()
+string2File inp f = writeLuaFunc f r
+  where r = result2maybe 
+          $ fmap toFuncProgram 
+          $ parseString parProgram mempty inp
 
 -- | Useful for debugging??? Should probably rewrite without the VM loop since
 -- we know the length beforehand.

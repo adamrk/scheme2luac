@@ -2,7 +2,7 @@ module Parser2 where
 
 import Text.Trifecta
 import Data.Char (isSpace, isAlpha, isAscii, isPrint)
-import Data.List (intercalate, scanl')
+import Data.List (intercalate)
 import Control.Applicative ((<|>), empty, liftA2, liftA3)
 import Data.List (nub)
 import qualified Data.Set as S
@@ -324,3 +324,9 @@ annotateProgram t xs = map (ann newt) xs
     ann t (Def d) = ADef $ annotateDef t d
     ann t (Comm e) = AComm $ annotateEx t e
     newt = M.unionWith min t (topDefined xs)
+
+allVars :: [CommOrDef] -> S.Set String
+allVars = foldMap getFree
+  where
+    getFree (Comm x) = freeVarsEx x
+    getFree (Def x) = freeInDef x
