@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
 
 module Assembler where
 
@@ -18,7 +18,8 @@ import qualified Data.Map as M
 data LuaConst = LuaNil | LuaBool Bool | LuaNumber Double | LuaString String
   deriving (Eq, Show)
 
-data LuaFunc = LuaFunc { startline    :: Word32, 
+data LuaFunc = LuaFunc { source       :: String,
+                         startline    :: Word32, 
                          endline      :: Word32,
                          upvals       :: Word8,
                          params       :: Word8,
@@ -167,6 +168,9 @@ check = inst2int (IABC OpReturn 0 1 0) == Just 8388638
 class ToByteString a where
   toBS :: a -> Maybe Builder
 
+instance ToByteString Char where
+  toBS c = Just $ stringUtf8 $ [c]
+
 instance ToByteString LuaInstruction where
   toBS = (fmap word32LE) . inst2int
 
@@ -184,9 +188,9 @@ instance (ToByteString a) => ToByteString [a] where
             (fmap mconcat) (traverse toBS $ xs)
 
 instance ToByteString LuaFunc where
-  toBS func = (fmap mconcat) . sequence $ 
-                       map Just [ word32LE 0, -- source name could go here
-                                  word32LE (startline func), 
+  toBS func = (fmap mconcat) . sequence $
+                                  (toBS $ source func) 
+                    :  map Just [ word32LE (startline func), 
                                   word32LE (endline func),
                                   word8 (upvals func),
                                   word8 (params func),
@@ -213,7 +217,7 @@ luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
             [0x00]    -- integral flag for floating point
 
 luaFunc :: LuaFunc -- Example function to test
-luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+luaFunc = LuaFunc {source = "foo", startline=0, endline=0, upvals=0, params=0, vararg=2,
                    maxstack=10, 
                    instructions=[ IABC  OpLoadNil 0 1 0
                                 , IABC  OpEq 1 0 1
@@ -231,24 +235,25 @@ luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    
                    functions=   []}
 
-smallFunc = LuaFunc{ startline=0, endline=0, upvals=1,
+smallFunc = LuaFunc{ source="@test.lua\0", startline=0, endline=0, upvals=1,
                                   params=0, vararg=0, maxstack=3,
             instructions = [
-                             IABC  OpGetUpVal 0 0 0
-                           , IABC  OpSetTable 0 256 257
-                           , IABx  OpGetGlobal 1 2
-                           , IABC  OpGetTable 2 0 256
-                           , IABC  OpCall 1 2 1
-                           , IABC  OpReturn 0 1 0
+                           --   IABC  OpGetUpVal 0 0 0
+                           -- , IABC  OpSetTable 0 256 257
+                           -- , IABx  OpGetGlobal 1 2
+                           -- , IABC  OpGetTable 2 0 256
+                           -- , IABC  OpCall 1 2 1
+                            IABC  OpReturn 0 1 0
                            ],
-            constants =    [ LuaNumber 0
-                           , LuaString "bar"
-                           , LuaString "print"
+            constants =    [ 
+                           --   LuaNumber 0
+                           -- , LuaString "bar"
+                           -- , LuaString "print"
                            ],
             functions =    []}
 
 luaFunc' :: LuaFunc -- Example function to test
-luaFunc' = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+luaFunc' = LuaFunc { source="@qux\0", startline=0, endline=0, upvals=0, params=0, vararg=2,
                    maxstack=3, 
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0

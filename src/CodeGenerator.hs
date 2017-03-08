@@ -11,13 +11,14 @@ import Data.Maybe (maybeToList, isJust)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
+
 -- | Lua chunk that takes 3 parameters: environment table, variable string, and 
 -- the number of environments to go up. It returns the value at the string in that
 -- environment.
 --
 luaLookup :: LuaFunc
 luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0, 
-                      maxstack=8,
+                      maxstack=8, source="@lookup\0",
     instructions =    [ IABx  OpLoadK 3 1 -- 1 for init
                       , IABC  OpMove 4 2 0 -- 3rd param for limit
                       , IABx  OpLoadK 5 1 -- 1 for step
@@ -43,14 +44,14 @@ toFunc (Var s t)
       -- | inx tell us how many scopes out to look for s
   | isJust inx = let Just n = inx
                  in  LuaFunc { startline=0, endline=0, upvals=1, params=0,
-                              vararg=0, maxstack=4,
+                              vararg=0, maxstack=4, source="@var" ++ s ++ "\0",
         instructions =        [ IABx  OpGetGlobal 0 2 -- lookup closure
                               , IAsBx OpJmp 0 0
-                              , IABC  OpGetUpVal 1 0 0 -- pass env
+                              , IABC  OpGetUpVal 1 0 0 -- get env env
                               , IABx  OpLoadK 2 0 -- load the variable name
                               , IABx  OpLoadK 3 1 -- load # envs up
-                              , IABC  OpCall 0 4 2
-                              , IABC  OpReturn 0 2 0
+                              , IABC  OpTailCall 0 4 0
+                              , IABC  OpReturn 0 0 0
                               ],
         constants =           [ LuaString s 
                               , LuaNumber . fromIntegral $ n
@@ -59,7 +60,7 @@ toFunc (Var s t)
         functions =           [] }
   | otherwise = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
     -- ^ if there is no indicated scope, assume it is a global func
-                          maxstack=1,
+                          maxstack=1, source="@glvar" ++ s ++ "\0",
         instructions =    [ IABx  OpGetGlobal 0 0
                           , IABC  OpReturn 0 2 0
                           ],
@@ -69,7 +70,8 @@ toFunc (Var s t)
     inx = M.lookup s t
 
 toFunc (Literal (LitBool b)) =
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
+  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+            maxstack=1, source="@bool\0",
     instructions = [ IABC  OpLoadBool 0 (if b then 1 else 0) 0
                    , IABC  OpReturn 0 2 0
                    ],
@@ -77,7 +79,8 @@ toFunc (Literal (LitBool b)) =
     functions =    []}
 
 toFunc (Literal (LitNum n)) = 
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
+  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+            maxstack=1, source="@num" ++ show n ++ "\0",
     instructions = [ IABx  OpLoadK 0 0
                    , IABC  OpReturn 0 2 0
                    ],
@@ -85,7 +88,8 @@ toFunc (Literal (LitNum n)) =
     functions =    []}
 
 toFunc (Literal (LitChar c)) = 
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
+  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+            maxstack=1, source="@char" ++ show c ++ "\0",
     instructions = [ IABx  OpLoadK 0 0
                    , IABC  OpReturn 0 2 0
                    ],
@@ -93,7 +97,8 @@ toFunc (Literal (LitChar c)) =
     functions =    []}
 
 toFunc (Literal (LitStr s)) = 
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
+  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+            maxstack=1, source="@str" ++ show s ++ "\0",
     instructions = [ IABx  OpLoadK 0 0
                    , IABC  OpReturn 0 2 0
                    ],
@@ -103,21 +108,22 @@ toFunc (Literal (LitStr s)) =
 toFunc (Call f xs) = let nvars = length xs
  in 
     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
-              maxstack = fromIntegral nvars + 3,
+              maxstack = fromIntegral nvars + 1, source="@call\0",
       instructions =  concatMap (\x -> 
-                          [ IABx OpClosure (x+1) x -- closure for var x 
+                          [ IABx OpClosure x x -- closure for var x 
                           , IABC OpGetUpVal 0 0 0 -- pass in new env
-                          , IABC OpCall (x+1) 1 2 -- eval x
+                          , IABC OpCall x 1 2 -- eval x
                           ]) [0..nvars] -- loop over (f=0) then vars
                        ++
-                      [ IABC  OpCall 1 (fromIntegral nvars + 1) 2 -- call f
-                      , IABC  OpReturn 1 2 0
+                      [ IABC  OpTailCall 0 (fromIntegral nvars + 1) 0 -- call f
+                      , IABC  OpReturn 0 0 0
                       ],
       constants =    [],
       functions =    toFunc f : map toFunc xs}
 
 toFunc (Lambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1, 
-                                 params=0, vararg=0, maxstack = 1,
+                                 params=0, vararg=0, maxstack = 1, 
+                                 source="@lambda\0",
     instructions = [ IABx  OpClosure 0 0 -- closure that evals f with params
                    , IABC  OpGetUpVal 0 0 0 -- pass env table
                    , IABC  OpReturn 0 2 0 -- return the closure
@@ -126,22 +132,23 @@ toFunc (Lambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1,
     functions    = [toFuncLambda vs b]}
 
 toFunc (Cond a b c) = LuaFunc{ startline=4, endline=4, upvals=1, params=0, 
-                                vararg=0, maxstack = 4,
+                                vararg=0, maxstack = 4, source="@if\0",
     instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
                    , IABx  OpClosure 1 0 -- cond closure
                    , IABC  OpMove 0 0 0 -- pass env
                    , IABC  OpCall 1 1 2 -- call cond
                    , IABC  OpLoadBool 2 1 0 -- load true in reg 3
                    , IABC  OpEq 0 2 1 -- skip if reg 2 is true
-                   , IAsBx OpJmp 0 4 -- jump to false case
+                   , IAsBx OpJmp 0 3 -- jump to false case
                    , IABx  OpClosure 1 1 -- exp1 closure
                    , IABC  OpMove 0 0 0 -- pass in env
-                   , IABC  OpCall 1 1 2 -- get expr
-                   , IAsBx OpJmp 0 3 -- jump to return
+                   -- , IABC  OpTailCall 1 1 0 -- get expr
+                   -- , IABC  OpReturn 1 0 0
+                   , IAsBx OpJmp 0 2 -- jump to return
                    , IABx  OpClosure 1 2 -- exp2 closure
                    , IABC  OpMove 0 0 0 -- pass in env
-                   , IABC  OpCall 1 1 2 -- get expr
-                   , IABC  OpReturn 1 2 0
+                   , IABC  OpTailCall 1 1 0 -- get expr
+                   , IABC  OpReturn 1 0 0
                    ],
     constants    = [ LuaNumber 0 ],
     functions    = [ toFunc a, toFunc b, toFunc c ]}
@@ -159,6 +166,7 @@ toFuncLambda vars f = let nvars = length vars
                   LuaFunc{ startline=5, endline=5, upvals=1, 
                            params = fromIntegral nvars, vararg=0, 
                            maxstack = fromIntegral nvars + 2,
+                           source="@lambdabody\0",
       instructions = [ IABC  OpNewTable nvars 0 0 -- new env after params
                      , IABC  OpGetUpVal (nvars+1) 0 0 -- old env
                      , IABC  OpSetTable nvars (nvars+256) (nvars+1) 
@@ -180,7 +188,7 @@ toFuncLambda vars f = let nvars = length vars
 --
 toFuncBody :: AnnBody -> LuaFunc
 toFuncBody (Body ds es) = LuaFunc{ startline=0, endline=0, upvals=1, params=0,
-                                    vararg=0, maxstack=1,
+                                    vararg=0, maxstack=1, source="@inBody\0",
             instructions = concatMap (\i -> 
                              [ IABx  OpClosure 0 i -- get def or expr
                              , IABC  OpGetUpVal 0 0 0 -- pass env
@@ -195,7 +203,8 @@ toFuncBody (Body ds es) = LuaFunc{ startline=0, endline=0, upvals=1, params=0,
 -- 
 toFuncDef :: AnnDef -> LuaFunc
 toFuncDef (Def1 (Var x _) e) = LuaFunc{ startline=3, endline=3, upvals=1,
-                                 params=0, vararg=0, maxstack=2,
+                                 params=0, vararg=0, maxstack=2, 
+                                 source="@def1" ++ show x ++ "\0",
             instructions = [ IABC  OpGetUpVal 0 0 0 -- get env
                            , IABx  OpClosure 1 0 -- closure to evaluate e
                            , IABC  OpMove 0 0 0 -- pass env
@@ -207,7 +216,8 @@ toFuncDef (Def1 (Var x _) e) = LuaFunc{ startline=3, endline=3, upvals=1,
             functions =    [ toFunc e ]}
 toFuncDef (Def2 x vs b) = toFuncDef $ Def1 x (Lambda vs b)
 toFuncDef (Def3 ds) = LuaFunc{ startline=0, endline=0, upvals=1,
-                                params=0, vararg=0, maxstack=1,
+                                params=0, vararg=0, maxstack=1, 
+                                source="@def3\0",
           instructions = concatMap (\n -> 
                             [ IABx OpClosure 0 n -- get def closure
                             , IABC OpGetUpVal 0 0 0 -- pass env
@@ -219,7 +229,7 @@ toFuncDef (Def3 ds) = LuaFunc{ startline=0, endline=0, upvals=1,
 
 toFuncProgram :: [CommOrDef] -> LuaFunc
 toFuncProgram xs = LuaFunc{ startline=0, endline=0, upvals=0, params=0, 
-                            vararg=0, maxstack=3,
+                            vararg=0, maxstack=3, source = "@main\0",
         instructions = [ IABC OpNewTable 0 0 0 -- env table
                        , IABx OpGetGlobal 1 0 -- print command
                        ] 
@@ -247,16 +257,16 @@ toFuncProgram xs = LuaFunc{ startline=0, endline=0, upvals=0, params=0,
                   ]
 
 -- | Converts a Scheme value into a Lua chunk. The chunk takes no parameters, 
--- but expects a single upvalue which is a table of the defined atoms. Entry 0 
+-- but expects a boolgle upvalue which is a table of the defined atoms. Entry 0 
 -- in the table points to the table for the environment one level up. The chunk
 -- returns a single value which is the result of evaluating the value (or
 -- possibly no value e.g. in the case of define).
 --
 genEval :: Value -> LuaFunc
 genEval (Number n) = LuaFunc{ startline=1, endline=1, upvals=1, 
-                              params=0, vararg=0, maxstack=1, 
+                              params=0, vararg=0, maxstack=1, source="@old\0",
                  instructions=[ 
-                                IABx  OpLoadK 0 0 -- Load n
+                                 IABx  OpLoadK 0 0 -- Load n
                               , IABC  OpReturn 0 2 0 -- Return n
                               ],   
                  constants=   [ LuaNumber . fromIntegral $ n ], 
@@ -264,7 +274,7 @@ genEval (Number n) = LuaFunc{ startline=1, endline=1, upvals=1,
 
 genEval (Boolean b) = let val = if b then 1 else 0
                       in  LuaFunc{ startline=1, endline=1, upvals=1,
-                                   params=0, vararg=0, maxstack=1,
+                                   params=0, vararg=0, maxstack=1, source="@old\0",
               instructions = [ IABC  OpLoadBool 0 val 0
                              , IABC  OpReturn 0 2 0
                              ],
@@ -272,7 +282,7 @@ genEval (Boolean b) = let val = if b then 1 else 0
               functions    = []}
 
 genEval (Atom x) = LuaFunc{ startline=2, endline=2, upvals=1,
-                                params=0, vararg=0, maxstack=1,
+                                params=0, vararg=0, maxstack=1, source="@old\0",
           instructions = [ IABx  OpClosure 0 0 -- closure to look up x
                          , IABC  OpGetUpVal 0 0 0 -- pass env table as upval
                          , IABC  OpCall 0 1 2 -- call lookup closure
@@ -283,7 +293,7 @@ genEval (Atom x) = LuaFunc{ startline=2, endline=2, upvals=1,
 
 genEval (List [Atom "define", Atom x, f]) = 
                     LuaFunc{ startline=3, endline=3, upvals=1,
-                                 params=0, vararg=0, maxstack=3,
+                                 params=0, vararg=0, maxstack=3, source="@old\0",
             instructions = [ IABC  OpNewTable 0 0 0 -- new env table
                            , IABC  OpGetUpVal 1 0 0 -- old env table to reg 1
                            , IABC  OpSetTable 0 257 1 -- point new env to old
@@ -300,9 +310,9 @@ genEval (List [Atom "define", Atom x, f]) =
 
 genEval (List [Atom "lambda", List vars, f]) = 
   LuaFunc{ startline=4, endline=4, upvals=1, 
-           params=0, vararg=0, maxstack = 1,
+           params=0, vararg=0, maxstack = 1, source="@old\0",
     instructions = [ IABx  OpClosure 0 0 -- closure that evals f with params
-                   , IABC  OpGetUpVal 0 0 0 -- pass env table
+                   , IABC  OpGetUpVal 0 0 0 -- pass enboolable
                    , IABC  OpReturn 0 2 0 -- return the closure
                    ],
     constants    = [],
@@ -310,7 +320,7 @@ genEval (List [Atom "lambda", List vars, f]) =
 
 genEval (List [Atom "if", cond, exp1, exp2]) = 
     LuaFunc{ startline=4, endline=4, upvals=1, params=0, vararg=0, 
-              maxstack = 4,
+              maxstack = 4, source="@old\0",
     instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
                    , IABC  OpNewTable 1 0 0 --- new env table
                    , IABC  OpSetTable 1 256 0 -- point new table to old
@@ -338,6 +348,7 @@ genEval (List [Atom "if", cond, exp1, exp2]) =
 
 genEval (List [Atom "register-global", Atom x]) =
   LuaFunc{ startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=1,
+           source="@old\0",
     instructions = [ IABx  OpClosure 0 0
                    , IABC  OpGetUpVal 0 0 0
                    , IABC  OpCall 0 1 2
@@ -350,7 +361,7 @@ genEval (List [Atom "register-global", Atom x]) =
 genEval (List (f:xs)) = let nvars = length xs
  in 
     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
-              maxstack = fromIntegral nvars + 3,
+              maxstack = fromIntegral nvars + 3, source="@old\0",
       instructions =   IABC  OpGetUpVal 0 0 0 : -- get env table
                        concatMap (\x -> 
                           [ IABC OpNewTable 1 0 0 -- new env table (reg 1)
@@ -377,7 +388,7 @@ genLambda vars f =
   in  
                   LuaFunc{ startline=5, endline=5, upvals=1, 
                            params = fromIntegral nvars, vararg=0, 
-                           maxstack = fromIntegral nvars + 2,
+                           maxstack = fromIntegral nvars + 2, source="@old\0",
       instructions = [ IABC  OpNewTable nvars 0 0 -- new env after params
                      , IABC  OpGetUpVal (nvars+1) 0 0 -- old env
                      , IABC  OpSetTable nvars (nvars+256) (nvars+1)
@@ -394,14 +405,14 @@ genLambda vars f =
       constants    = map (\(Atom x) -> LuaString x) vars ++ [LuaNumber 0], 
       functions    = [genEval f]}
 
--- |Takes two params, second is a table.
+-- |Tabool two params, second is a table.
 -- Looks up index n in the table and if it is nil return (lookup 0, lookup 0)
 -- if the value is not nil return (nil, val)
 -- The idea is that 0 points to the next environment up so we could call again
 --
 lookupOnce :: String -> LuaFunc
 lookupOnce s = LuaFunc { startline=0, endline=0, upvals=0, params=2,
-                            vararg=0, maxstack=5,
+                            vararg=0, maxstack=5, source="@old\0",
      instructions    = [ IABC  OpLoadNil 2 2 0 -- nil in reg 2
                        , IABC  OpGetTable 3 1 256 -- lookup result -> reg 3
                        , IABC  OpEq 0 2 3 -- if nil result skip next
@@ -422,7 +433,7 @@ lookupOnce s = LuaFunc { startline=0, endline=0, upvals=0, params=2,
 -- changed to lookup in global env if still nil?
 --
 lookupEnv :: String -> LuaFunc
-lookupEnv s =  LuaFunc { startline=0, endline=0, upvals=1, params=0,
+lookupEnv s =  LuaFunc { startline=0, endline=0, upvals=1, params=0, source="@old\0",
                          vararg=0, maxstack=5, -- TForloop returns values in 3,4
         instructions = [ IABx  OpClosure 0 0 -- lookup once closure (iter func)
                        , IABC  OpLoadNil 1 1 0 -- state (nil when done)
@@ -456,20 +467,20 @@ genProgram vs = let atoms = nub $ foldMap getAtoms vs
                     ins =   IABC OpNewTable 0 0 0 -- original env 
                           : IABx OpGetGlobal 1 0 -- print -> reg 1
                           : foldMap closeAndCall [0..length vs] -- eval vals 
-                          ++
+                       ++
                           [ IABC OpCall 1 2 1 -- call print on reg 2
                           , IABC OpReturn 0 1 0
                           ]
                     cns = [ LuaString "print" ]
                 in  LuaFunc {startline=0, endline=0, upvals=0, params=0, 
                              vararg=2, maxstack=3,instructions=ins, 
-                             constants=cns, functions=funcs}
+                             constants=cns, functions=funcs, source="@old\0"}
 
 ------------------- Functions to load at beginning ------------------------
 
 primitives :: [(String, LuaFunc)]
 primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
-                              vararg=2, maxstack=7, 
+                              vararg=2, maxstack=7, source="@prim*\0",
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0 -- to hold values
                                 , IABC  OpVarArg 1 0 0 -- args in reg 1 and up
@@ -488,7 +499,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                 ],
                    functions=   []}) 
              , ("+", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
-                              vararg=2, maxstack=7, 
+                              vararg=2, maxstack=7, source="@prim+\0",
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0
                                 , IABC  OpVarArg 1 0 0
@@ -510,7 +521,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                    
                    functions=   []})
              , ("-", LuaFunc {startline=0, endline=0, upvals=0, params=0, 
-                              vararg=2, maxstack=9, 
+                              vararg=2, maxstack=9, source="@prim-\0",
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0 -- table for args
                                 , IABC  OpVarArg 1 0 0 -- load arguments
@@ -538,6 +549,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                    functions=   []})
              , ("quotient", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
+                                      source="@prim-quotient\0",
                     instructions = [ IABC  OpDiv 0 0 1 
                                    , IABC  OpReturn 0 2 0
                                    ],
@@ -545,6 +557,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , ("modulo", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
+                                      source="@prim-modulo\0",
                     instructions = [ IABC  OpMod 0 0 1 
                                    , IABC  OpReturn 0 2 0
                                    ],
@@ -552,6 +565,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , ("expt", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
+                                      source="@prim-expt\0",
                     instructions = [ IABC  OpPow 0 0 1 
                                    , IABC  OpReturn 0 2 0
                                    ],
@@ -559,6 +573,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , ("not", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=1, vararg=0, maxstack = 1,
+                                      source="@prim-not\0",
                     instructions = [ IABC  OpNot 0 0 0 
                                    , IABC  OpReturn 0 2 0
                                    ],
@@ -566,6 +581,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , ("=", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
+                                      source="@prim=\0",
                     instructions = [ IABC  OpEq 0 0 1 -- if eq then PC++
                                    , IAsBx OpJmp 0 1 -- jmp requred after eq
                                    , IABC  OpLoadBool 0 1 1 -- load true, PC++
@@ -576,6 +592,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , ("<", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
+                                      source="@prim<\0",
                     instructions = [ IABC  OpLT 0 0 1 -- if lt then PC++
                                    , IAsBx OpJmp 0 1 -- jmp requred after lt
                                    , IABC  OpLoadBool 0 1 1 -- load true, PC++
@@ -586,6 +603,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , (">", LuaFunc { startline=0, endline=0, upvals=0, 
                                       params=2, vararg=0, maxstack = 2,
+                                      source="@prim>\0",
                     instructions = [ IABC  OpLT 0 1 0 -- if gt then PC++
                                    , IAsBx OpJmp 0 1 -- jmp requred after gt
                                    , IABC  OpLoadBool 0 1 1 -- load true, PC++
@@ -594,7 +612,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                    ],
                     constants    = [],
                     functions    = []})
-             ]
+            ]
 
 addPrim :: [String] -> LuaFunc
 addPrim atoms = 
@@ -609,10 +627,11 @@ addPrim atoms =
       np = length funcs
   in  
     LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, maxstack=2,
+              source="@addPrim\0",
       instructions = [ IABC  OpGetUpVal 0 0 0
                      ]
                      ++ (foldMap (\n -> [ IABx  OpClosure 1 n
-                                       , IABC  OpSetTable 0 (256+n) 1 ]) 
+                                        , IABC  OpSetTable 0 (256+n) 1 ]) 
                                 [0..np-1])
                      ++
                      [ IABC  OpReturn 0 1 0 
@@ -640,8 +659,8 @@ luafunc = (fmap . fmap) genProgram $ parseFromFile file "samplecode"
 
 writeLuaFunc :: String -> Maybe LuaFunc -> IO ()
 writeLuaFunc f ml = case ml >>= finalBuilder of
-                        Just bs -> writeBuilder f bs
-                        Nothing -> print "error completing builder"
+                       Just bs -> writeBuilder f bs
+                       Nothing -> print "error completing builder"
 
 string2File :: String -> String -> IO ()
 string2File inp f = writeLuaFunc f r
@@ -649,12 +668,12 @@ string2File inp f = writeLuaFunc f r
           $ fmap toFuncProgram 
           $ parseString parProgram mempty inp
 
--- | Useful for debugging??? Should probably rewrite without the VM loop since
+-- | Use    or debugging??? Should probably rewrite without the VM loop since
 -- we know the length beforehand.
 --
 copyTable :: Int -> LuaFunc
 copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
-                        maxstack=7,
+                        maxstack=7, source="@copyTable\0",
     instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table (reg 0)
                    , IABC  OpNewTable 1 0 0 -- new table (reg 1)
                    , IABx  OpLoadK 2 0 -- loop init 0
@@ -664,7 +683,7 @@ copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
                    -- skip register 5 for external loop variable
                    , IABC  OpGetTable 6 0 2 -- copy from old to reg 6 
                    , IABC  OpSetTable 1 2 6 -- copy from reg 6 to new table
-                   , IAsBx OpForLoop 2 (-3) -- loop back to GetTable
+               , IAsBx OpForLoop 2 (-3) -- loop back to GetTable
                    , IABC  OpReturn 1 2 0
                    ],
     constants    = [ LuaNumber 0
@@ -676,12 +695,12 @@ copyTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
 -- |useful for debugging??
 printTable :: Int -> LuaFunc
 printTable n = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
-                         maxstack=7,
-    instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
+                         maxstack=7, source="@printTable\0",
+    instructions = [ IABC  OpGetUpVal 0 0 0 --     nv table
                    , IABx  OpLoadK 1 0 -- loop init 0
                    , IABx  OpLoadK 2 1 -- loop max n-1
                    , IABx  OpLoadK 3 2 -- loop step 1
-                   , IAsBx OpForPrep 1 3 
+               , IAsBx OpForPrep 1 3 
                    , IABx  OpGetGlobal 5 3 -- print closure -> reg 5
                    , IABC  OpGetTable 6 0 1 -- table val -> reg 6
                    , IABC  OpCall 5 2 1 -- call print
@@ -705,6 +724,7 @@ addPrintTable vs = let tblSize = (length . nub . foldMap getAtoms $ vs) - 1
                                , endline = endline func
                                , upvals = 0, params = 0, vararg = 2
                                , maxstack = 3
+                               , source = source func
                                , instructions = init (instructions func) ++
                                  [ IABx OpClosure 2 nFuncs
                                  , IABC OpMove 0 0 0
@@ -718,7 +738,7 @@ addPrintTable vs = let tblSize = (length . nub . foldMap getAtoms $ vs) - 1
 
 sumFunc :: LuaFunc -- Example function to test
 sumFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=7, 
+                   maxstack=7, source="@sumfunc\0",
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0
                                 , IABC  OpVarArg 1 0 0
@@ -743,7 +763,7 @@ sumFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
 
 sampleFunc :: LuaFunc -- Example function to test
 sampleFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=6, 
+                   maxstack=6, source="@sampleFunc\0", 
                    instructions=[ IABC OpNewTable 0 0 0
                                 , IABC OpSetTable 0 257 259
                                 , IABC OpNewTable 1 0 0
