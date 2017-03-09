@@ -177,8 +177,8 @@ toFuncLambda vars f = let nvars = length vars
                           [0..nvars-1]) ++
                      [ IABx  OpClosure (nvars+1) 0 -- closure for f
                      , IABC  OpMove 0 nvars 0 -- pass in new env
-                     , IABC  OpCall (nvars+1) 1 2 -- eval f
-                     , IABC  OpReturn (nvars+1) 2 0
+                     , IABC  OpTailCall (nvars+1) 1 0 -- eval f
+                     , IABC  OpReturn (nvars+1) 0 0
                      ],
       constants    = map (\(Var x _) -> LuaString x) vars ++ [LuaNumber 0], 
       functions    = [toFuncBody f]}
@@ -193,11 +193,16 @@ toFuncBody (Body ds es) = LuaFunc{ startline=0, endline=0, upvals=1, params=0,
                              [ IABx  OpClosure 0 i -- get def or expr
                              , IABC  OpGetUpVal 0 0 0 -- pass env
                              , IABC  OpCall 0 1 2
-                             ]) [0..length ds + length es - 1]
-                          ++ [ IABC  OpReturn 0 2 0],
+                             ]) [0.. n - 2]
+                          ++ [ IABx  OpClosure 0 (n - 1)
+                             , IABC  OpGetUpVal 0 0 0
+                             , IABC  OpTailCall 0 0 0
+                             , IABC  OpReturn 0 0 0
+                             ],
             constants    = [],
             functions    = map toFuncDef ds ++ map toFunc es}
-
+  where
+    n = length ds + length es
 -- |Turn a def into a lua chunk by evaluating the expression and then binding it
 -- to the proper variable name in the current environment.
 -- 
