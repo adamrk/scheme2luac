@@ -161,9 +161,54 @@ inst2int ins@(IAsBx op a b) = fmap fromIntegral $ sum <$> sequence
                             fmap ((2^6*)) $ validA a,
                             fmap (((2^14)*) . (+131071)) $ validsBx b]
 
-check :: Bool -- sanity check
-check = inst2int (IABC OpReturn 0 1 0) == Just 8388638
+rk :: Int -> Int
+rk n = if n > 256 then 0 else n
 
+maxReg :: LuaInstruction -> Int
+maxReg (IABx _ a _) = a
+maxReg (IAsBx OpJmp _ _) = 0
+maxReg (IAsBx _ a _) = a + 3
+
+maxReg (IABC OpMove a b _) = max a b
+maxReg (IABC OpLoadNil a b c) = max a b
+maxReg (IABC OpUnM a b c) = max a b
+maxReg (IABC OpNot a b c) = max a b
+maxReg (IABC OpLen a b c) = max a b
+maxReg (IABC OpTestSet a b c) = max a b
+
+maxReg (IABC OpLoadBool a _ _) = a
+maxReg (IABC OpGetUpVal a _ _) = a
+maxReg (IABC OpSetUpVal a _ _) = a
+maxReg (IABC OpTest a _ _) = a
+maxReg (IABC OpNewTable a _ _) = a
+maxReg (IABC OpClose a _ _) = a
+
+maxReg (IABC OpGetTable a b c) = maximum [a, b, rk c]
+
+maxReg (IABC OpSetTable a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpAdd a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpSub a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpMul a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpDiv a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpMod a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpPow a b c) = maximum [a, rk b, rk c]
+
+maxReg (IABC OpConcat a b c) = maximum [a, b, c]
+
+maxReg (IABC OpCall a b c) = max (a + c - 2) (a + b - 1)
+
+maxReg (IABC OpReturn a b _) = a + b - 2
+
+maxReg (IABC OpTailCall a b _) = a + b - 1 -- could actually return more
+maxReg (IABC OpVarArg a b _) = a + b - 1
+
+maxReg (IABC OpEq _ b c) = max (rk b) (rk c)
+maxReg (IABC OpLT _ b c) = max (rk b) (rk c)
+maxReg (IABC OpLE _ b c) = max (rk b) (rk c)
+
+maxReg (IABC OpTForLoop a _ c) = a + c + 2
+
+maxReg (IABC OpSetList a b _) = a + b
 
 class ToByteString a where
   toBS :: a -> Maybe Builder
