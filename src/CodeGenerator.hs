@@ -1,3 +1,6 @@
+{-# LANGUAGE TypeSynonymInstances
+           , FlexibleInstances #-}
+
 module CodeGenerator where
 
 import Assembler
@@ -8,97 +11,176 @@ import Data.List (foldl', elemIndex)
 import Text.Trifecta (parseFromFile, Result(Success, Failure), parseString)
 import Data.List (nub)
 import Data.Maybe (maybeToList, isJust)
+import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
 
 data PartialLuaFunc = PartialLuaFunc  { inst :: [LuaInstruction]
                                       , cnst :: [LuaConst]
                                       , funcs :: [LuaFunc]
+                                      , next :: Int
                                       } deriving (Eq, Show)
 
-emptyPartialFunc = PartialLuaFunc [] [] []
+emptyPartialFunc = PartialLuaFunc [] [] [] 0
+
+instance Monoid (State PartialLuaFunc ()) where
+  mempty = return ()
+  mappend = (>>)
+
+addSingle :: (Eq a) => a -> [a] -> (Int, [a])
+addSingle a xs = 
+  let n = length xs
+      place = elemIndex a xs
+  in  case place of 
+    Nothing -> (n, xs ++ [a])
+    Just m -> (m, xs)
+
+addAndGetNewInx :: (Eq a) => [a] -> [a] -> ([Int], [a])
+addAndGetNewInx (x:xs) ys = 
+  let (n, zs) = addSingle x ys
+      (ns, ws) = addAndGetNewInx xs zs
+  in  (n:ns, ws)
+addAndGetNewInx [] ys = ([], ys)
+
+addConstants :: [LuaConst] -> State PartialLuaFunc [Int]
+addConstants cs = state $ \f ->
+  let (inxs, newcnst) = addAndGetNewInx cs (cnst f)
+      newfunc = PartialLuaFunc 
+        { inst = inst f
+        , cnst = newcnst
+        , funcs = funcs f
+        , next = next f
+        }
+  in  (inxs, newfunc)
+
+addFunctions :: [LuaFunc] -> State PartialLuaFunc [Int]
+addFunctions fs = state $ \f ->
+  let (inxs, newfs) = addAndGetNewInx fs (funcs f)
+      newfunc = PartialLuaFunc
+        { inst = inst f
+        , cnst = cnst f
+        , funcs = newfs
+        , next = next f
+        }
+  in  (inxs, newfunc)
+
+addInstructions :: [LuaInstruction] -> State PartialLuaFunc ()
+addInstructions is = state $ \f -> ((), PartialLuaFunc 
+  { inst = inst f ++ is
+  , cnst = cnst f
+  , funcs = funcs f
+  , next = next f
+  })
+
+incNext :: State PartialLuaFunc ()
+incNext = state $ \f -> 
+  let newf = PartialLuaFunc {inst=inst f, cnst=cnst f, funcs=funcs f,
+                             next=next f + 1}
+  in ((), newf)
+
+getNext :: State PartialLuaFunc Int
+getNext = state $ \f -> (next f, f)
+
+changeToTail :: State PartialLuaFunc ()
+changeToTail = state $ \f -> 
+  let
+    newf = case last $ inst f of
+      IABC OpCall n v _ -> PartialLuaFunc
+        { inst = init (inst f) ++ [IABC OpTailCall n v 0]
+        , cnst = cnst f
+        , funcs = funcs f
+        , next = 0
+        }
+      _ -> f
+  in
+    ((), newf)
 
 -- | Append instructions, constants, and functions to the partial func to place
 -- the evaluated expr in the register indicated by the int
 --
-addExpr :: PartialLuaFunc -> Int -> AnnExpr -> PartialLuaFunc
-addExpr f n (Var s t) = case nScopes of 
-  Just k -> PartialLuaFunc
-    { inst = inst f ++ [ IABx OpGetGlobal n cinx
-                       , IAsBx OpJmp 0 0
-                       , IABC OpGetUpVal (n+1) 0 0 
-                       , IABx OpLoadK (n+2) (cinx + 1)
-                       , IABx OpLoadK (n+3) (cinx + 2)
-                       , IABC OpCall n 4 2
-                       ]
-    , cnst = cnst f ++ [ LuaString "var_lookup"
-                       , LuaString s
-                       , LuaNumber . fromIntegral $ k
-                       ]
-    , funcs = funcs f
-    }
-  Nothing -> PartialLuaFunc
-    { inst = inst f ++ [ IABx OpGetGlobal n cinx ]
-    , cnst = cnst f ++ [ LuaString s ]
-    , funcs = funcs f
-    }
-  where
+addExpr :: AnnExpr -> State PartialLuaFunc ()
+addExpr (Var s t) = case nScopes of
+  Just k -> 
+    do
+      inxs <- addConstants [ LuaString "var_lookup"
+                           , LuaString s
+                           , LuaNumber . fromIntegral $ k
+                           ]
+      n <- getNext
+      addInstructions [ IABx OpGetGlobal n (inxs !! 0) -- lookup var func
+                      , IAsBx OpJmp 0 0 
+                      , IABC OpGetUpVal (n+1) 0 0 -- env table 
+                      , IABx OpLoadK (n+2) (inxs !! 1) -- var string
+                      , IABx OpLoadK (n+3) (inxs !! 2) -- # of environments
+                      , IABC OpCall n 4 2 -- call lookup
+                      ]
+      incNext
+  Nothing ->
+    do
+      inxs <- addConstants [LuaString s]
+      n <- getNext
+      addInstructions [ IABx OpGetGlobal n (head inxs) ]
+      incNext
+  where 
     nScopes = M.lookup s t
-    cinx = length $ cnst f
 
-addExpr f n (Literal (LitBool b)) = PartialLuaFunc
-  { inst = inst f ++ [ IABC OpLoadBool n val 0 ]
-  , cnst = cnst f
-  , funcs = funcs f
-  } 
+addExpr (Literal (LitBool b)) =
+  do
+    n <- getNext 
+    addInstructions [ IABC OpLoadBool n val 0 ]
+    incNext
   where
     val = if b then 1 else 0
 
-addExpr f n (Literal cs) = PartialLuaFunc
-  { inst = inst f ++ [ IABx OpLoadK n inx ]
-  , cnst = newcnst
-  , funcs = funcs f
-  }
+addExpr (Literal cs) = 
+  do
+    n <- getNext
+    inx <- addConstants [val]
+    addInstructions [ IABx OpLoadK n (head inx) ]
+    incNext
   where
     val = case cs of
       LitChar c -> LuaString [c]
       LitStr s -> LuaString s
       LitNum m -> LuaNumber m
-    (inx, newcnst) = case elemIndex val (cnst f) of
-      Just m -> (m, cnst f)
-      Nothing -> (length $ cnst f, cnst f ++ [val])
+  
+addExpr c@(Call _ _) = 
+  do
+    inx <- addFunctions [toFunc c]
+    n <- getNext
+    addInstructions [ IABx OpClosure n (head inx)
+                    , IABC OpGetUpVal 0 0 0
+                    , IABC OpCall n 1 2
+                    ]
+    incNext
 
-addExpr f n c@(Call _ _) = PartialLuaFunc
-  { inst = inst f ++ [ IABx OpClosure n inx
-                     , IABC OpGetUpVal 0 0 0
-                     , IABC OpCall n 1 2
-                     ]
-  , cnst = cnst f
-  , funcs = funcs f ++ [toFunc c] 
-  }
-  where
-    inx = length . funcs $ f
+addExpr (Lambda vs b) = 
+  do
+    n <- getNext
+    inx <- addFunctions [toFuncLambda vs b]
+    addInstructions [ IABx OpClosure n (head inx)
+                    , IABC OpGetUpVal 0 0 0
+                    ]
+    incNext
 
-addExpr f n (Lambda vs b) = PartialLuaFunc
-  { inst = inst f ++ [ IABx OpClosure n inx
-                     , IABC OpGetUpVal 0 0 0
+addExpr (Cond a b c) = 
+  do
+    n <- getNext
+    inx <- addFunctions [toFunc a, toFunc b, toFunc c]
+    addInstructions  [ IABx  OpClosure n (inx !! 0) -- cond closure
+                     , IABC  OpGetUpVal 0 0 0 -- pass env
+                     , IABC  OpCall 0 1 2 -- call cond
+                     , IABC  OpLoadBool (n+1) 1 0 -- load true in reg n+1
+                     , IABC  OpEq 0 (n+1) n -- skip if reg n is true
+                     , IAsBx OpJmp 0 3 -- jump to false case
+                     , IABx  OpClosure n (inx !! 1) -- exp1 closure
+                     , IABC  OpGetUpVal 0 0 0 -- pass in env
+                     , IAsBx OpJmp 0 2 -- jump to return
+                     , IABx  OpClosure n (inx !! 2) -- exp2 closure
+                     , IABC  OpGetUpVal 0 0 0 -- pass in env
+                     , IABC  OpCall n 1 0 -- get expr
                      ]
-  , cnst = cnst f
-  , funcs = funcs f ++ [toFuncLambda vs b]
-  }
-  where 
-    inx = length . funcs $ f
-
-addExpr f n c@(Cond _ _ _) = PartialLuaFunc
-  { inst = inst f ++ [ IABx OpClosure n inx
-                     , IABC OpGetUpVal 0 0 0
-                     , IABC OpCall n 1 2
-                     ]
-  , cnst = cnst f
-  , funcs = funcs f ++ [toFunc c]
-  }
-  where
-    inx = length . funcs $ f
+    incNext
 
 completeFunc :: String -> PartialLuaFunc -> LuaFunc
 completeFunc s f = LuaFunc { startline=0, endline=0, upvals=1, params=0,
@@ -136,133 +218,151 @@ luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0,
 -- called the chunk will return the value that the expression evaluates to.
 --
 toFunc :: AnnExpr -> LuaFunc
-toFunc (Var s t) 
-      -- | inx tell us how many scopes out to look for s
-  | isJust inx = let Just n = inx
-                 in  LuaFunc { startline=0, endline=0, upvals=1, params=0,
-                              vararg=0, maxstack=4, source="@var" ++ s ++ "\0",
-        instructions =        [ IABx  OpGetGlobal 0 2 -- lookup closure
-                              , IAsBx OpJmp 0 0
-                              , IABC  OpGetUpVal 1 0 0 -- get env env
-                              , IABx  OpLoadK 2 0 -- load the variable name
-                              , IABx  OpLoadK 3 1 -- load # envs up
-                              , IABC  OpTailCall 0 4 0
-                              , IABC  OpReturn 0 0 0
-                              ],
-        constants =           [ LuaString s 
-                              , LuaNumber . fromIntegral $ n
-                              , LuaString "var_lookup"
-                              ],
-        functions =           [] }
-  | otherwise = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
-    -- ^ if there is no indicated scope, assume it is a global func
-                          maxstack=1, source="@glvar" ++ s ++ "\0",
-        instructions =    [ IABx  OpGetGlobal 0 0
-                          , IABC  OpReturn 0 2 0
-                          ],
-        constants =       [ LuaString s ],
-        functions =       []}
-  where
-    inx = M.lookup s t
-
-toFunc (Literal (LitBool b)) =
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
-            maxstack=1, source="@bool\0",
-    instructions = [ IABC  OpLoadBool 0 (if b then 1 else 0) 0
-                   , IABC  OpReturn 0 2 0
-                   ],
-    constants =    [],
-    functions =    []}
-
-toFunc (Literal (LitNum n)) = 
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
-            maxstack=1, source="@num" ++ show n ++ "\0",
-    instructions = [ IABx  OpLoadK 0 0
-                   , IABC  OpReturn 0 2 0
-                   ],
-    constants =    [ LuaNumber n ],
-    functions =    []}
-
-toFunc (Literal (LitChar c)) = 
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
-            maxstack=1, source="@char" ++ show c ++ "\0",
-    instructions = [ IABx  OpLoadK 0 0
-                   , IABC  OpReturn 0 2 0
-                   ],
-    constants =    [ LuaString [c] ],
-    functions =    []}
-
-toFunc (Literal (LitStr s)) = 
-  LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
-            maxstack=1, source="@str" ++ show s ++ "\0",
-    instructions = [ IABx  OpLoadK 0 0
-                   , IABC  OpReturn 0 2 0
-                   ],
-    constants =    [ LuaString s ],
-    functions =    []}
-
 toFunc (Call f xs) = completeFunc "@call\0" $ PartialLuaFunc
   { inst = inst placedVals ++ [ IABC OpTailCall 0 (fromIntegral nvars + 1) 0
                               , IABC OpReturn 0 0 0
                               ]
   , cnst = cnst placedVals
   , funcs = funcs placedVals
+  , next = 0
   }
   where
-    foldhelp p (n, e) = addExpr p n e
-    placedVals = foldl' foldhelp emptyPartialFunc $ zip [0..] (f:xs)
+    placedVals = execState (foldMap addExpr (f:xs))
+      emptyPartialFunc
     nvars = length xs
 
--- toFunc (Call f xs) = let nvars = length xs
---  in 
---     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
---               maxstack = fromIntegral nvars + 1, source="@call\0",
---       instructions =  concatMap (\x -> 
---                           [ IABx OpClosure x x -- closure for var x 
---                           , IABC OpGetUpVal 0 0 0 -- pass in new env
---                           , IABC OpCall x 1 2 -- eval x
---                           ]) [0..nvars] -- loop over (f=0) then vars
---                        ++
---                       [ IABC  OpTailCall 0 (fromIntegral nvars + 1) 0 -- call f
---                       , IABC  OpReturn 0 0 0
---                       ],
---       constants =    [],
---       functions =    toFunc f : map toFunc xs}
+toFunc x = completeFunc name $ 
+  execState (do
+    addExpr x
+    changeToTail
+    addInstructions [IABC OpReturn 0 0 0])
+    emptyPartialFunc
+  where
+    name = case x of
+      (Var s _) -> "@var_" ++ show s ++ "\0"
+      (Literal (LitBool b)) -> "@litBool_" ++ show b ++ "\0"
+      (Literal (LitChar c)) -> "@litChar_" ++ show c ++ "\0"
+      (Literal (LitNum n)) -> "@litNum_" ++ show n ++ "\0"
+      (Literal (LitStr s)) -> "@litStr_" ++ show s ++ "\0"
+      (Lambda _ _) -> "@lambda\0"
+      (Cond _ _ _) -> "@cond\0"
+      (Assign _ _) -> "@assign\0"
 
-toFunc (Lambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1, 
-                                 params=0, vararg=0, maxstack = 1, 
-                                 source="@lambda\0",
-    instructions = [ IABx  OpClosure 0 0 -- closure that evals f with params
-                   , IABC  OpGetUpVal 0 0 0 -- pass env table
-                   , IABC  OpReturn 0 2 0 -- return the closure
-                   ],
-    constants    = [],
-    functions    = [toFuncLambda vs b]}
 
-toFunc (Cond a b c) = LuaFunc{ startline=4, endline=4, upvals=1, params=0, 
-                                vararg=0, maxstack = 4, source="@if\0",
-    instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
-                   , IABx  OpClosure 1 0 -- cond closure
-                   , IABC  OpMove 0 0 0 -- pass env
-                   , IABC  OpCall 1 1 2 -- call cond
-                   , IABC  OpLoadBool 2 1 0 -- load true in reg 3
-                   , IABC  OpEq 0 2 1 -- skip if reg 2 is true
-                   , IAsBx OpJmp 0 3 -- jump to false case
-                   , IABx  OpClosure 1 1 -- exp1 closure
-                   , IABC  OpMove 0 0 0 -- pass in env
-                   -- , IABC  OpTailCall 1 1 0 -- get expr
-                   -- , IABC  OpReturn 1 0 0
-                   , IAsBx OpJmp 0 2 -- jump to return
-                   , IABx  OpClosure 1 2 -- exp2 closure
-                   , IABC  OpMove 0 0 0 -- pass in env
-                   , IABC  OpTailCall 1 1 0 -- get expr
-                   , IABC  OpReturn 1 0 0
-                   ],
-    constants    = [ LuaNumber 0 ],
-    functions    = [ toFunc a, toFunc b, toFunc c ]}
+-- toFunc (Var s t) 
+--       -- | inx tell us how many scopes out to look for s
+--   | isJust inx = let Just n = inx
+--                  in  LuaFunc { startline=0, endline=0, upvals=1, params=0,
+--                               vararg=0, maxstack=4, source="@var" ++ s ++ "\0",
+--         instructions =        [ IABx  OpGetGlobal 0 2 -- lookup closure
+--                               , IAsBx OpJmp 0 0
+--                               , IABC  OpGetUpVal 1 0 0 -- get env env
+--                               , IABx  OpLoadK 2 0 -- load the variable name
+--                               , IABx  OpLoadK 3 1 -- load # envs up
+--                               , IABC  OpTailCall 0 4 0
+--                               , IABC  OpReturn 0 0 0
+--                               ],
+--         constants =           [ LuaString s 
+--                               , LuaNumber . fromIntegral $ n
+--                               , LuaString "var_lookup"
+--                               ],
+--         functions =           [] }
+--   | otherwise = LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0,
+--     -- ^ if there is no indicated scope, assume it is a global func
+--                           maxstack=1, source="@glvar" ++ s ++ "\0",
+--         instructions =    [ IABx  OpGetGlobal 0 0
+--                           , IABC  OpReturn 0 2 0
+--                           ],
+--         constants =       [ LuaString s ],
+--         functions =       []}
+--   where
+--     inx = M.lookup s t
 
-toFunc (Assign _ _) = undefined
--- ^ Still need to do this!!!!!!!
+-- toFunc (Literal (LitBool b)) =
+--   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+--             maxstack=1, source="@bool\0",
+--     instructions = [ IABC  OpLoadBool 0 (if b then 1 else 0) 0
+--                    , IABC  OpReturn 0 2 0
+--                    ],
+--     constants =    [],
+--     functions =    []}
+
+-- toFunc (Literal (LitNum n)) = 
+--   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+--             maxstack=1, source="@num" ++ show n ++ "\0",
+--     instructions = [ IABx  OpLoadK 0 0
+--                    , IABC  OpReturn 0 2 0
+--                    ],
+--     constants =    [ LuaNumber n ],
+--     functions =    []}
+
+-- toFunc (Literal (LitChar c)) = 
+--   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+--             maxstack=1, source="@char" ++ show c ++ "\0",
+--     instructions = [ IABx  OpLoadK 0 0
+--                    , IABC  OpReturn 0 2 0
+--                    ],
+--     constants =    [ LuaString [c] ],
+--     functions =    []}
+
+-- toFunc (Literal (LitStr s)) = 
+--   LuaFunc { startline=0, endline=0, upvals=1, params=0, vararg=0, 
+--             maxstack=1, source="@str" ++ show s ++ "\0",
+--     instructions = [ IABx  OpLoadK 0 0
+--                    , IABC  OpReturn 0 2 0
+--                    ],
+--     constants =    [ LuaString s ],
+--     functions =    []}
+
+
+-- -- toFunc (Call f xs) = let nvars = length xs
+-- --  in 
+-- --     LuaFunc { startline=6, endline=6, upvals=1, params=0, vararg=0, 
+-- --               maxstack = fromIntegral nvars + 1, source="@call\0",
+-- --       instructions =  concatMap (\x -> 
+-- --                           [ IABx OpClosure x x -- closure for var x 
+-- --                           , IABC OpGetUpVal 0 0 0 -- pass in new env
+-- --                           , IABC OpCall x 1 2 -- eval x
+-- --                           ]) [0..nvars] -- loop over (f=0) then vars
+-- --                        ++
+-- --                       [ IABC  OpTailCall 0 (fromIntegral nvars + 1) 0 -- call f
+-- --                       , IABC  OpReturn 0 0 0
+-- --                       ],
+-- --       constants =    [],
+-- --       functions =    toFunc f : map toFunc xs}
+
+-- toFunc (Lambda vs b) = LuaFunc{ startline=4, endline=4, upvals=1, 
+--                                  params=0, vararg=0, maxstack = 1, 
+--                                  source="@lambda\0",
+--     instructions = [ IABx  OpClosure 0 0 -- closure that evals f with params
+--                    , IABC  OpGetUpVal 0 0 0 -- pass env table
+--                    , IABC  OpReturn 0 2 0 -- return the closure
+--                    ],
+--     constants    = [],
+--     functions    = [toFuncLambda vs b]}
+
+-- toFunc (Cond a b c) = LuaFunc{ startline=4, endline=4, upvals=1, params=0, 
+--                                 vararg=0, maxstack = 4, source="@if\0",
+--     instructions = [ IABC  OpGetUpVal 0 0 0 -- get env table
+--                    , IABx  OpClosure 1 0 -- cond closure
+--                    , IABC  OpMove 0 0 0 -- pass env
+--                    , IABC  OpCall 1 1 2 -- call cond
+--                    , IABC  OpLoadBool 2 1 0 -- load true in reg 3
+--                    , IABC  OpEq 0 2 1 -- skip if reg 2 is true
+--                    , IAsBx OpJmp 0 3 -- jump to false case
+--                    , IABx  OpClosure 1 1 -- exp1 closure
+--                    , IABC  OpMove 0 0 0 -- pass in env
+--                    , IAsBx OpJmp 0 2 -- jump to return
+--                    , IABx  OpClosure 1 2 -- exp2 closure
+--                    , IABC  OpMove 0 0 0 -- pass in env
+--                    , IABC  OpTailCall 1 1 0 -- get expr
+--                    , IABC  OpReturn 1 0 0
+--                    ],
+--     constants    = [ LuaNumber 0 ],
+--     functions    = [ toFunc a, toFunc b, toFunc c ]}
+
+-- toFunc (Assign _ _) = undefined
+-- -- ^ Still need to do this!!!!!!!
 
 -- |Turn a lambda into a lua chunk. The funcion takes one parameter for each 
 -- variable, binds them to the corresponding names in the environment and then
