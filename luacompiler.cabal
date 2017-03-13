@@ -18,11 +18,14 @@ library
   exposed-modules:     Assembler
                      , Parser
                      , CodeGenerator
+                     , Parser2
   build-depends:       base >= 4.7 && < 5
                      , bytestring
                      , containers
                      , text
                      , trifecta
+                     , QuickCheck
+                     , mtl
   default-language:    Haskell2010
 
 executable luacompiler-exe
@@ -39,9 +42,12 @@ test-suite luacompiler-test
   main-is:             Spec.hs
   build-depends:       base
                      , luacompiler
+                     , containers 
                      , hspec
                      , process
                      , filepath
+                     , QuickCheck
+                     , directory
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 

@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
 
 module Assembler where
 
@@ -18,7 +18,8 @@ import qualified Data.Map as M
 data LuaConst = LuaNil | LuaBool Bool | LuaNumber Double | LuaString String
   deriving (Eq, Show)
 
-data LuaFunc = LuaFunc { startline    :: Word32, 
+data LuaFunc = LuaFunc { source       :: String,
+                         startline    :: Word32, 
                          endline      :: Word32,
                          upvals       :: Word8,
                          params       :: Word8,
@@ -160,12 +161,60 @@ inst2int ins@(IAsBx op a b) = fmap fromIntegral $ sum <$> sequence
                             fmap ((2^6*)) $ validA a,
                             fmap (((2^14)*) . (+131071)) $ validsBx b]
 
-check :: Bool -- sanity check
-check = inst2int (IABC OpReturn 0 1 0) == Just 8388638
+rk :: Int -> Int
+rk n = if n >= 256 then 0 else n
 
+maxReg :: LuaInstruction -> Int
+maxReg (IABx _ a _) = a
+maxReg (IAsBx OpJmp _ _) = 0
+maxReg (IAsBx _ a _) = a + 3
+
+maxReg (IABC OpMove a b _) = max a b
+maxReg (IABC OpLoadNil a b c) = max a b
+maxReg (IABC OpUnM a b c) = max a b
+maxReg (IABC OpNot a b c) = max a b
+maxReg (IABC OpLen a b c) = max a b
+maxReg (IABC OpTestSet a b c) = max a b
+
+maxReg (IABC OpLoadBool a _ _) = a
+maxReg (IABC OpGetUpVal a _ _) = a
+maxReg (IABC OpSetUpVal a _ _) = a
+maxReg (IABC OpTest a _ _) = a
+maxReg (IABC OpNewTable a _ _) = a
+maxReg (IABC OpClose a _ _) = a
+
+maxReg (IABC OpGetTable a b c) = maximum [a, b, rk c]
+
+maxReg (IABC OpSetTable a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpAdd a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpSub a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpMul a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpDiv a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpMod a b c) = maximum [a, rk b, rk c]
+maxReg (IABC OpPow a b c) = maximum [a, rk b, rk c]
+
+maxReg (IABC OpConcat a b c) = maximum [a, b, c]
+
+maxReg (IABC OpCall a b c) = max (a + c - 2) (a + b - 1)
+
+maxReg (IABC OpReturn a b _) = a + b - 2
+
+maxReg (IABC OpTailCall a b _) = a + b - 1 -- could actually return more
+maxReg (IABC OpVarArg a b _) = a + b - 1
+
+maxReg (IABC OpEq _ b c) = max (rk b) (rk c)
+maxReg (IABC OpLT _ b c) = max (rk b) (rk c)
+maxReg (IABC OpLE _ b c) = max (rk b) (rk c)
+
+maxReg (IABC OpTForLoop a _ c) = a + c + 2
+
+maxReg (IABC OpSetList a b _) = a + b
 
 class ToByteString a where
   toBS :: a -> Maybe Builder
+
+instance ToByteString Char where
+  toBS c = Just $ stringUtf8 $ [c]
 
 instance ToByteString LuaInstruction where
   toBS = (fmap word32LE) . inst2int
@@ -184,9 +233,9 @@ instance (ToByteString a) => ToByteString [a] where
             (fmap mconcat) (traverse toBS $ xs)
 
 instance ToByteString LuaFunc where
-  toBS func = (fmap mconcat) . sequence $ 
-                       map Just [ word32LE 0, -- source name could go here
-                                  word32LE (startline func), 
+  toBS func = (fmap mconcat) . sequence $
+                                  (toBS $ source func) 
+                    :  map Just [ word32LE (startline func), 
                                   word32LE (endline func),
                                   word8 (upvals func),
                                   word8 (params func),
@@ -197,10 +246,10 @@ instance ToByteString LuaFunc where
                                   toBS $ functions func]
                     ++ map Just [ word32LE 0,
                                   word32LE 0,
-                                  word32LE 0]              
+                                  word32LE 0]       
 
 
--- luac header for my architecture
+-- luac header for my setup
 luaHeader :: [Word8]
 luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
             [0x51] ++ -- Version Lua 5.1
@@ -213,7 +262,7 @@ luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
             [0x00]    -- integral flag for floating point
 
 luaFunc :: LuaFunc -- Example function to test
-luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+luaFunc = LuaFunc {source = "foo", startline=0, endline=0, upvals=0, params=0, vararg=2,
                    maxstack=10, 
                    instructions=[ IABC  OpLoadNil 0 1 0
                                 , IABC  OpEq 1 0 1
@@ -231,24 +280,25 @@ luaFunc = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
                    
                    functions=   []}
 
-smallFunc = LuaFunc{ startline=0, endline=0, upvals=1,
+smallFunc = LuaFunc{ source="@test.lua\0", startline=0, endline=0, upvals=1,
                                   params=0, vararg=0, maxstack=3,
             instructions = [
-                             IABC  OpGetUpVal 0 0 0
-                           , IABC  OpSetTable 0 256 257
-                           , IABx  OpGetGlobal 1 2
-                           , IABC  OpGetTable 2 0 256
-                           , IABC  OpCall 1 2 1
-                           , IABC  OpReturn 0 1 0
+                           --   IABC  OpGetUpVal 0 0 0
+                           -- , IABC  OpSetTable 0 256 257
+                           -- , IABx  OpGetGlobal 1 2
+                           -- , IABC  OpGetTable 2 0 256
+                           -- , IABC  OpCall 1 2 1
+                            IABC  OpReturn 0 1 0
                            ],
-            constants =    [ LuaNumber 0
-                           , LuaString "bar"
-                           , LuaString "print"
+            constants =    [ 
+                           --   LuaNumber 0
+                           -- , LuaString "bar"
+                           -- , LuaString "print"
                            ],
             functions =    []}
 
 luaFunc' :: LuaFunc -- Example function to test
-luaFunc' = LuaFunc {startline=0, endline=0, upvals=0, params=0, vararg=2,
+luaFunc' = LuaFunc { source="@qux\0", startline=0, endline=0, upvals=0, params=0, vararg=2,
                    maxstack=3, 
                    instructions=[ 
                                   IABC  OpNewTable 0 0 0

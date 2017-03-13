@@ -1,52 +1,21 @@
 import Assembler
 import CodeGenerator
+import Parser
 import Test.Hspec
+import Test.QuickCheck
 import System.Process
 import System.FilePath
+import System.Exit
+import System.Directory
+import qualified Data.Map as M
+import Data.List (nub, sort, groupBy)
+import Data.Char (isAlpha)
+
 
 endVal :: String -> String
 endVal s = let ls = lines s
                n  = length ls
            in  drop 8 $ ls !! (n - 5)
-
-
-defineScripts :: [String]
-defineScripts = map ("test/testfiles/" ++) 
-  [ "define1.scm"
-  , "define2.scm"
-  , "define3.scm" 
-  ]
-
-arithScripts :: [String]
-arithScripts = map ("test/testfiles/" ++) 
-  [ "arith1.scm" 
-  , "arith2.scm"
-  , "arith3.scm"
-  , "arith4.scm"
-  , "arith5.scm" 
-  ]
-
-boolScripts :: [String]
-boolScripts = map ("test/testfiles/" ++)  
-  [ "bool1.scm" 
-  , "bool2.scm"
-  , "bool3.scm"
-  , "bool4.scm"
-  , "bool5.scm"
-  ]
-
-lambdaScripts :: [String]
-lambdaScripts = map ("test/testfiles/" ++)
-  [ "lambda1.scm"
-  , "lambda2.scm"
-  , "lambda3.scm"
-  , "lambda4.scm"
-  , "lambda5.scm" 
-  ]
-
-recursiveScripts :: [String]
-recursiveScripts = map ("test/testfiles/" ++)
-  [ "recursive1.scm" ]
 
 fileExCompare :: String -> SpecWith ()
 fileExCompare s = 
@@ -55,7 +24,7 @@ fileExCompare s =
           do 
             a <- runIO $ readCreateProcess (shell $ "scheme < " ++ s) ""
             b <- runIO $ do
-              f <- compileFromFile s
+              f <- compileFromFile M1 s
               case f >>= finalBuilder of
                 Just bs -> writeBuilder outfile bs
                 Nothing -> print "assembly error"
@@ -63,15 +32,29 @@ fileExCompare s =
                 readCreateProcess (shell $ "lua " ++ outfile) ""
             it s $ endVal a `shouldBe` b
 
+bytecodeParses :: String -> LuaFunc -> SpecWith ()
+bytecodeParses s luafunc = do
+  (exitCode, stdOut, stdErr) <- runIO $
+    case finalBuilder luafunc of
+      Just bs -> writeBuilder outfile bs >> do 
+        readCreateProcessWithExitCode (shell $ "luac -l -l " ++ outfile) "" 
+      Nothing -> return (ExitFailure 101, "AssemblyError", "AssemblyError")
+  it (s ++ " assembled") $ exitCode `shouldNotBe` (ExitFailure 101)
+  it (s ++ " valid bytecode") $ exitCode `shouldBe` ExitSuccess
+  where outfile = "test/testfiles/temp.luac" 
+
 main :: IO ()
 main = hspec $ do
-  describe "define tests" 
-        $ mapM_ fileExCompare defineScripts
-  describe "arithmetic tests"
-        $ mapM_ fileExCompare arithScripts
-  describe "boolean tests"
-        $ mapM_ fileExCompare boolScripts
-  describe "lambda tests"
-        $ mapM_ fileExCompare lambdaScripts
-  describe "recursive tests"
-        $ mapM_ fileExCompare recursiveScripts
+  testFiles <- runIO $ do
+      files <- listDirectory "test/testfiles"
+      return $ groupBy (\x y -> (takeWhile isAlpha x == takeWhile isAlpha y)) 
+             . sort 
+             . filter ((== ".scm") . takeExtension) 
+             $ files
+  mapM_ run testFiles
+  describe "bytecodeParses" 
+        $ mapM_ (uncurry bytecodeParses) primitives
+  where
+    run xs = let name = takeWhile isAlpha (head xs)
+             in  describe (name ++ " tests") $
+                    mapM_ (fileExCompare . ("test/testfiles/" ++)) xs
