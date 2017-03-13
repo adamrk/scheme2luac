@@ -4,7 +4,6 @@
 module CodeGenerator where
 
 import Assembler
-import Parser
 import Parser2
 import Data.Monoid
 import Data.List (foldl', elemIndex)
@@ -497,14 +496,11 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
 
 
 ------------------------- Main Functions -----------------------------
-data Method = M1 | M2 deriving (Eq, Show)
+compileFromFile :: String -> IO (Maybe LuaFunc)
+compileFromFile   = (fmap . fmap) toFuncProgram . parseFromFile parProgram
 
-compileFromFile :: Method -> String -> IO (Maybe LuaFunc)
-compileFromFile M1 = (fmap . fmap) toFuncProgram . parseFromFile parProgram
-compileFromFile M2 = (fmap . fmap) genProgram . parseFromFile file
-
-parseAndWrite :: Method -> String -> String -> IO ()
-parseAndWrite m inp out = compileFromFile m inp >>= writeLuaFunc out
+parseAndWrite :: String -> String -> IO ()
+parseAndWrite inp out = compileFromFile inp >>= writeLuaFunc out
 
 writeLuaFunc :: String -> Maybe LuaFunc -> IO ()
 writeLuaFunc f ml = case ml >>= finalBuilder of

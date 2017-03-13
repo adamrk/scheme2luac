@@ -7,5 +7,6 @@ import System.Environment(getArgs)
 main :: IO ()
 main = do
   xs <- getArgs
-  let method = if length xs >= 3 && xs !! 2 == "--noOp" then M2 else M1 
-  parseAndWrite method (head xs) (head $ tail xs)
+  if length xs /= 2 
+    then putStrLn "Usage: luacompiler-exe INPUT_FILE OUTPUT_FILE"
+    else parseAndWrite (head xs) (head $ tail xs)

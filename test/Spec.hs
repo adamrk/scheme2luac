@@ -1,6 +1,5 @@
 import Assembler
 import CodeGenerator
-import Parser
 import Test.Hspec
 import Test.QuickCheck
 import System.Process
@@ -24,7 +23,7 @@ fileExCompare s =
           do 
             a <- runIO $ readCreateProcess (shell $ "scheme < " ++ s) ""
             b <- runIO $ do
-              f <- compileFromFile M1 s
+              f <- compileFromFile s
               case f >>= finalBuilder of
                 Just bs -> writeBuilder outfile bs
                 Nothing -> print "assembly error"
