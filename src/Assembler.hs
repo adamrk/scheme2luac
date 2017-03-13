@@ -162,7 +162,7 @@ inst2int ins@(IAsBx op a b) = fmap fromIntegral $ sum <$> sequence
                             fmap (((2^14)*) . (+131071)) $ validsBx b]
 
 rk :: Int -> Int
-rk n = if n > 256 then 0 else n
+rk n = if n >= 256 then 0 else n
 
 maxReg :: LuaInstruction -> Int
 maxReg (IABx _ a _) = a
