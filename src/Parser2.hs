@@ -86,7 +86,7 @@ data GenExpr a = Var String a
           | Cond (GenExpr a) (GenExpr a) (GenExpr a)
           | Assign (GenExpr ()) (GenExpr a)
           | DerivedExpr
-          | MacroUse
+          | MacroUse (GenExpr ()) [GenDatum a]
           | MacroBlock
            deriving (Eq, Show)
 
@@ -96,6 +96,9 @@ data GenDef a = Def1 (GenExpr ()) (GenExpr a)
               deriving (Eq, Show)
 
 data GenBody a = Body [GenDef a] [GenExpr a] deriving (Eq, Show)
+
+data GenDatum a = SimpleDatum (GenExpr a) | CompoundDatum [GenDatum a]
+  deriving (Eq, Show)
 
 data GenCommOrDef a = Comm (GenExpr a) | Def (GenDef a) deriving (Eq, Show)
 
@@ -109,8 +112,6 @@ type AnnExpr = GenExpr VarT
 type AnnDef = GenDef VarT 
 type AnnBody = GenBody VarT
 type AnnCommOrDef = GenCommOrDef VarT
-
-
 
 parExpr :: Parser Expr
 parExpr = parVar 
@@ -244,6 +245,8 @@ parAssign = (<|> unexpected "not an assignment") $ try $ do
 parProgram :: Parser [CommOrDef]
 parProgram = many $ try (fmap Comm $ token parExpr) 
                     <|> (fmap Def $ token parDef)
+
+---------------- Annotating functions ------------------------
 
 definedVars :: GenDef a -> S.Set String
 definedVars (Def1 (Var s _) _) = S.singleton s
