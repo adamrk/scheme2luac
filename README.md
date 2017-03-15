@@ -1,9 +1,9 @@
-# Scheme2Lua
+# Scheme2Luac
 
 A Scheme compiler for the Lua VM, still in progress. It is designed for Lua 5.1 (download [here](https://www.lua.org/download.html)). Build using Haskell's package manager stack (available [here](https://www.haskellstack.org)):
 ```
-git clone https://github.com/adamrk/scheme2lua.git
-cd scheme2lua
+git clone https://github.com/adamrk/scheme2luac.git
+cd scheme2luac
 stack build
 ```
 
@@ -16,6 +16,6 @@ lua -v
 Then run:
 ```
 touch test.scm
-stack exec -- scheme2lua-exe test.scm out.luac
+stack exec -- scheme2luac-exe test.scm out.luac
 lua out.luac
 ```
