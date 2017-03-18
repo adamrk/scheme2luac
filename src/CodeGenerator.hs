@@ -5,6 +5,7 @@ module CodeGenerator where
 
 import Assembler
 import Parser2
+import Macro
 import Data.Monoid
 import Data.List (foldl', elemIndex)
 import Text.Trifecta (parseFromFile, Result(Success, Failure), parseString)
@@ -351,10 +352,13 @@ toFuncProgram xs = completeFunc "@main\0" $ execState (do
   addInstructions [ IABC OpNewTable 0 0 0
                   , IABx OpGetGlobal 1 (head pinx) ]
   setNext 2
-  addProgram xs
+  addProgram (preProcess xs)
   addInstructions [ IABC OpCall 1 2 1
                   , IABC OpReturn 0 1 0 ])
   emptyPartialFunc
+
+preProcess :: [CommOrDef] -> [CommOrDef]
+preProcess = applyMacrosProgram defaultMacros 
 
 ------------------- Functions to load at beginning ------------------------
 

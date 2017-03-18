@@ -9,16 +9,17 @@ convMacro :: GenExpr () -> GenDatum ()
 convMacro (Var s a) = SimpleDatum (Var s a)
 convMacro (Literal x) = SimpleDatum (Literal x)
 convMacro (Call x xs) = CompoundDatum $ convMacro x : map convMacro xs
-convMacro (Lambda vs b) = CompoundDatum $ SimpleDatum (Var "lambda" ())
-  : CompoundDatum (map convMacro vs) : [convMacroBody b]
+convMacro (Lambda vs b) = 
+  let bs = convMacroBody b
+  in  CompoundDatum $ SimpleDatum (Var "lambda" ())
+      : CompoundDatum (map convMacro vs) : bs
 convMacro (Cond a b c) = CompoundDatum $ SimpleDatum (Var "if" ())
   : convMacro a : convMacro b : [convMacro c]
 convMacro (Assign a b) = CompoundDatum $ SimpleDatum (Var "set!" ())
   : convMacro a : [convMacro b]
 
-convMacroBody :: GenBody () -> GenDatum ()
-convMacroBody (Body ds es) = CompoundDatum $ map convMacroDef ds 
-  ++ map convMacro es
+convMacroBody :: GenBody () -> [GenDatum ()]
+convMacroBody (Body ds es) = map convMacroDef ds ++ map convMacro es
 
 convMacroDef :: GenDef () -> GenDatum ()
 convMacroDef (Def1 x y) = CompoundDatum $ [ SimpleDatum (Var "define" ())
@@ -28,8 +29,7 @@ convMacroDef (Def1 x y) = CompoundDatum $ [ SimpleDatum (Var "define" ())
 convMacroDef (Def2 x ys b) = CompoundDatum $ [ SimpleDatum (Var "define" ())
                                              , CompoundDatum $ SimpleDatum x :
                                                 map SimpleDatum ys
-                                             , convMacroBody b
-                                             ]
+                                             ] ++ convMacroBody b
 convMacroDef (Def3 ds) = CompoundDatum $ SimpleDatum (Var "begin" ()) : 
   map convMacroDef ds                                      
 
@@ -108,8 +108,8 @@ convDatum (SimpleDatum x) = x
 convDatum (CompoundDatum (SimpleDatum (Var "if" _) : [a,b,c])) = 
   Cond (convDatum a) (convDatum b) (convDatum c)
 convDatum (CompoundDatum (SimpleDatum (Var "lambda" _) 
-  : (CompoundDatum xs) : [y])) = 
-    Lambda (map convDatum xs) (convDatumBody y)
+  : (CompoundDatum xs) : ys)) = 
+    Lambda (map convDatum xs) (convDatumBody ys)
 convDatum (CompoundDatum ( SimpleDatum (Var "set!" _) 
                          : SimpleDatum (Var x _) 
                          : [y])) = 
@@ -128,18 +128,23 @@ convDatumDef (CompoundDatum (SimpleDatum (Var "begin" ()) : xs)) =
   Def3 $ map convDatumDef xs
 convDatumDef (CompoundDatum (SimpleDatum (Var "define" ()) : 
                CompoundDatum (SimpleDatum (Var x ()) : vs) :
-               [b])) = 
+               b)) = 
   Def2 (Var x ()) (map convDatum vs) (convDatumBody b)
 convDatumDef (CompoundDatum (SimpleDatum (Var "define" ()) : x : [y])) =
   Def1 (convDatum x) (convDatum y)
 
-convDatumBody :: GenDatum () -> GenBody ()
-convDatumBody (SimpleDatum x) = Body [] [x]
-convDatumBody (CompoundDatum (x:xs)) = 
-  if isDef x 
-    then let  Body ds es = convDatumBody (CompoundDatum xs)
-         in   Body (convDatumDef x : ds) es
-    else Body [] (map convDatum (x:xs))  
+convDatumBody :: [GenDatum ()] -> GenBody ()
+convDatumBody [] = Body [] []
+convDatumBody (x:xs) =
+  let Body ds es = convDatumBody xs
+  in  if isDef x
+    then Body (convDatumDef x:ds) es
+    else Body ds (convDatum x:es)
+-- convDatumBody (CompoundDatum (x:xs)) = 
+--   if isDef x 
+--     then let  Body ds es = convDatumBody (CompoundDatum xs)
+--          in   Body (convDatumDef x : ds) es
+--     else Body [] (map convDatum (x:xs))  
 
 applyMacrosExpr :: MacroList -> GenExpr () -> GenExpr ()
 applyMacrosExpr ms = convDatum . applyMacros ms . convMacro
@@ -152,3 +157,26 @@ applyMacrosProgram ms xs = map (\x ->
   case x of
     Comm y -> Comm $ applyMacrosExpr ms y
     Def y -> Def $ applyMacrosDef ms y) xs
+
+defaultMacros :: MacroList
+defaultMacros = 
+  [ ( "let"
+    , PatternComp [ PatternLit "let" 
+                  , PatternComp [ PatternComp [ PatternId "a"
+                                              , PatternId "b"
+                                              ]
+                                , Ellipses
+                                ]
+                  , PatternId "c"
+                  ]
+    , PatternComp [ PatternComp [ PatternLit "lambda"
+                               , PatternComp [ PatternId "a"
+                                             , Ellipses
+                                             ]
+                               , PatternId "c"
+                               ]
+                 , PatternId "b"
+                 , Ellipses
+                 ]
+    )
+  ]
