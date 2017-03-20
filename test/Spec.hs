@@ -21,15 +21,16 @@ fileExCompare s =
         let outfile = replaceExtension s "luac"
         in
           do 
-            a <- runIO $ readCreateProcess (shell $ "scheme < " ++ s) ""
-            b <- runIO $ do
+            (_,a,_) <- runIO $ readCreateProcessWithExitCode (shell $ "scheme < " ++ s) ""
+            (exitcode, b, _) <- runIO $ do
               f <- compileFromFile s
               case f >>= finalBuilder of
                 Just bs -> writeBuilder outfile bs
                 Nothing -> print "assembly error"
-              (head . lines) <$> 
-                readCreateProcess (shell $ "lua " ++ outfile) ""
-            it s $ endVal a `shouldBe` b
+              readCreateProcessWithExitCode (shell $ "lua " ++ outfile) ""  
+            it s $ do
+              exitcode `shouldBe` ExitSuccess
+              endVal a `shouldBe` (head . lines $ b)
 
 bytecodeParses :: String -> LuaFunc -> SpecWith ()
 bytecodeParses s luafunc = do
