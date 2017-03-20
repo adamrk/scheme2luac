@@ -2,7 +2,7 @@ module Macro where
 
 import Parser2
 import qualified Data.Map as M
-import Data.Maybe (isJust)
+import Data.Maybe (catMaybes)
 import Control.Applicative (liftA2)
 
 convMacro :: GenExpr () -> GenDatum ()
@@ -37,7 +37,7 @@ data Pattern = PatternId String
              | PatternDat Lit 
              | PatternComp [Pattern]
              | PatternLit String
-             | Ellipses
+             | Ellipses [Pattern] Pattern
   deriving (Eq, Show)
 
 data Matched a = Matched (M.Map String (GenDatum a)) [Matched a]
@@ -57,8 +57,16 @@ combine (Matched m1 l1) (Matched m2 l2) =
 -- | Fills in a pattern from a GenDatum that matches it
 --
 match :: Pattern -> GenDatum a -> Maybe (Matched a)
-match (PatternComp [x, Ellipses]) (CompoundDatum ds) = 
-  Matched M.empty <$> traverse (match x) ds
+-- match (PatternComp [x, Ellipses]) (CompoundDatum ds) = 
+--  Matched M.empty <$> traverse (match x) ds
+match (Ellipses patterns pattern) (CompoundDatum ds) =
+  let n = length patterns
+  in  if length ds < n
+      then Nothing
+      else do
+        a <- (match (PatternComp patterns) (CompoundDatum (take n ds)))
+        b <- Matched M.empty <$> (traverse (match pattern) (drop n ds))
+        return $ combine a b
 match (PatternComp (x:xs)) (CompoundDatum (d:ds)) = 
   combine <$> (match x d) <*> (match (PatternComp xs) (CompoundDatum ds))
 match (PatternComp []) (CompoundDatum []) = Just $ Matched M.empty []
@@ -78,8 +86,12 @@ getDat (CompoundDatum xs) = xs
 getDat _ = []
 
 useTemplate :: Pattern -> Matched () -> Maybe (GenDatum ())
-useTemplate (PatternComp [a, Ellipses]) (Matched m ls) =
-  CompoundDatum <$> (sequence . filter isJust) (map (useTemplate a) ls)
+--useTemplate (PatternComp [a, Ellipses]) (Matched m ls) =
+--  CompoundDatum <$> (sequence . filter isJust) (map (useTemplate a) ls)
+useTemplate (Ellipses patterns final) m@(Matched hmap ls) = do
+  CompoundDatum ds <- useTemplate (PatternComp patterns) m
+  let es = catMaybes $ map (useTemplate final) ls
+  return (CompoundDatum (ds ++ es))
 useTemplate (PatternComp (x:xs)) m = 
   let a = useTemplate x m
       b = useTemplate (PatternComp xs) m
@@ -97,8 +109,8 @@ type MacroList = [(String, Pattern, Pattern)]
 applyMacros :: MacroList -> GenDatum () -> GenDatum ()
 applyMacros ms ex = 
   let conversions = map (\(k, p, t) -> applyMacro k p t ex) ms
-  in  case take 1 $ filter isJust conversions of
-        [Just x] ->  applyMacros ms x
+  in  case take 1 $ catMaybes conversions of
+        [x] ->  applyMacros ms x
         [] -> case ex of
           CompoundDatum ds -> CompoundDatum $ map (applyMacros ms) ds
           SimpleDatum y -> SimpleDatum y
@@ -161,26 +173,22 @@ applyMacrosProgram ms xs = map (\x ->
 defaultMacros :: MacroList
 defaultMacros = 
   [ ( "let"
-    , PatternComp [ PatternLit "let" 
-                  , PatternComp [ PatternComp [ PatternId "a"
-                                              , PatternId "b"
-                                              ]
-                                , Ellipses
-                                ]
-                  , PatternId "c"
-                  , PatternId "d"
-                  , Ellipses
-                  ]
-    , PatternComp [ PatternComp [ PatternLit "lambda"
-                               , PatternComp [ PatternId "a"
-                                             , Ellipses
-                                             ]
-                               , PatternId "c"
-                               , PatternId "d"
-                               , Ellipses
-                               ]
-                 , PatternId "b"
-                 , Ellipses
-                 ]
+    , Ellipses 
+        [ PatternLit "let" 
+        , Ellipses []  
+            (PatternComp [ PatternId "a"
+                         , PatternId "b"
+                         ])
+        , PatternId "c"]
+        (PatternId "d")
+    , Ellipses 
+        [ Ellipses 
+          [ PatternLit "lambda"
+          , Ellipses [] (PatternId "a")
+          , PatternId "c"
+          ]
+          (PatternId "d")
+        ]
+        (PatternId "b")
     )
   ]
