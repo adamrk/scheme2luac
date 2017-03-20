@@ -168,12 +168,16 @@ defaultMacros =
                                 , Ellipses
                                 ]
                   , PatternId "c"
+                  , PatternId "d"
+                  , Ellipses
                   ]
     , PatternComp [ PatternComp [ PatternLit "lambda"
                                , PatternComp [ PatternId "a"
                                              , Ellipses
                                              ]
                                , PatternId "c"
+                               , PatternId "d"
+                               , Ellipses
                                ]
                  , PatternId "b"
                  , Ellipses
