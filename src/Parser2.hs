@@ -8,6 +8,8 @@ import Data.List (nub)
 import qualified Data.Set as S
 import qualified Data.Map as M
 
+---------------------- Parse Tokens -----------------------------
+
 data Token = Identifier String 
            | Boolean' Bool
            | Number' Double 
@@ -73,6 +75,105 @@ parToken =   fmap Identifier parIdent
             charConv "newline" = Character '\n'
             charConv (['#', '\\', x]) = Character x
 
+------------------------- Parse Macros ------------------------------
+
+data Pattern = PatternId String 
+             | PatternDat Lit 
+             | PatternComp [Pattern]
+             | PatternLit String
+             | PatEllipses [Pattern] Pattern
+  deriving (Eq, Show)
+
+data TempElement = PureTemp Template 
+                 | TempEllipses Template 
+  deriving (Eq, Show) 
+
+data Template = TemplateId String
+              | TemplateDat Lit
+              | TemplateComp [TempElement]
+              | TemplateLit String
+  deriving (Eq, Show)
+
+getPatVars :: Pattern -> [String]
+getPatVars (PatternId s) = [s]
+getPatVars (PatternDat _) = []
+getPatVars (PatternComp xs) = concatMap getPatVars xs
+getPatVars (PatternLit _) = []
+getPatVars (PatEllipses xs x) = concatMap getPatVars xs ++ getPatVars x
+
+parPattern :: [String] -> Parser Pattern
+parPattern lits = 
+  try (do
+    token parLeft
+    pats <- many $ token $ parPattern lits
+    token parRight
+    let initial = init pats
+    if PatternId "..." `elem` initial
+    then unexpected "ellipses not at pattern end"
+    else if last pats == PatternId "..."
+      then if length initial >= 1 
+        then return $ PatEllipses (init $ initial) (last $ initial)
+        else unexpected "no pattern preceding ellipses"
+      else return $ PatternComp pats) 
+  <|> try (fmap PatternDat parLitRaw)
+  <|> try (do
+    s <- token parIdent
+    if s `elem` lits
+    then return $ PatternLit s
+    else return $ PatternId s)
+  <|> unexpected "couldn't parse pattern"
+
+parTempElement :: [String] -> Parser TempElement
+parTempElement vars = do
+  t <- token $ parTemplate vars
+  try (token (string "...") >> return (TempEllipses t)) 
+    <|> return (PureTemp t) 
+
+
+parTemplate :: [String] ->  Parser Template
+parTemplate vars = 
+  try (do
+    token parLeft
+    ts <- many (token $ parTempElement vars)
+    parRight
+    return $ TemplateComp ts)
+  <|> try (fmap TemplateDat parLitRaw)
+  <|> try (do
+    s <- token parIdent
+    if s `elem` vars
+    then return $ TemplateId s
+    else return $ TemplateLit s)
+  <|> unexpected "couldn't parse template"
+
+data SyntaxRule = SyntaxRule { pat :: Pattern, temp :: Template}
+  deriving (Eq, Show)
+
+parSynTaxRule :: [String] -> Parser SyntaxRule
+parSynTaxRule lits = do
+  token parLeft
+  p <- token $ parPattern lits
+  let vars = getPatVars p
+  t <- token $ parTemplate vars
+  parRight
+  return $ SyntaxRule p t
+
+parDefSyn :: Parser [SyntaxRule]
+parDefSyn = do
+  token parLeft 
+  token $ string "define-syntax"
+  key <- token parIdent
+  token parLeft
+  token $ string "syntax-rules"
+  token parLeft
+  ids <- many $ token parIdent
+  token parRight
+  rules <- many $ token (parSynTaxRule (key:ids))
+  token parRight
+  parRight
+  return $ rules
+
+------------------------- Parse Expressions and Defs -----------------
+
 data Lit = LitBool Bool
          | LitNum Double
          | LitChar Char
@@ -102,7 +203,9 @@ data GenDatum a = SimpleDatum (GenExpr a) | CompoundDatum [GenDatum a]
 
 data GenCommOrDef a = Comm (GenExpr a) 
                     | Def (GenDef a) 
-
+                    | DefSyn [SyntaxRule]
+  deriving (Eq, Show)
+  
 type VarT = M.Map String Int
 
 type Expr = GenExpr ()
@@ -122,12 +225,11 @@ parExpr = parVar
         <|> try parCond
         <|> parAssign 
 
-parLit :: Parser Expr
-parLit = fmap Literal (try $ 
-           do
+parLitRaw :: Parser Lit
+parLitRaw = try (do
               x <- parToken
-              if lit x then return (conv x) else empty
-         ) <|> unexpected "Not a literal"
+              if lit x then return (conv x) else empty)
+            <|> unexpected "Not a literal"
          where
             lit (Boolean' _) = True
             lit (Number' _) = True
@@ -138,6 +240,9 @@ parLit = fmap Literal (try $
             conv (Number' x) = LitNum x
             conv (Character x) = LitChar x
             conv (String x) = LitStr x
+
+parLit :: Parser Expr
+parLit = fmap Literal parLitRaw
 
 parLeft :: Parser ()
 parLeft = (try $ do
@@ -245,7 +350,8 @@ parAssign = (<|> unexpected "not an assignment") $ try $ do
 
 parProgram :: Parser [CommOrDef]
 parProgram = many $ try (fmap Comm $ token parExpr) 
-                    <|> (fmap Def $ token parDef)
+                    <|> try (fmap Def $ token parDef)
+                    <|> try (fmap DefSyn $ token parDefSyn)
 
 ---------------- Annotating functions ------------------------
 

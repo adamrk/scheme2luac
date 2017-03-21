@@ -33,23 +33,6 @@ convMacroDef (Def2 x ys b) = CompoundDatum $ [ SimpleDatum (Var "define" ())
 convMacroDef (Def3 ds) = CompoundDatum $ SimpleDatum (Var "begin" ()) : 
   map convMacroDef ds                                      
 
-data Pattern = PatternId String 
-             | PatternDat Lit 
-             | PatternComp [Pattern]
-             | PatternLit String
-             | PatEllipses [Pattern] Pattern
-  deriving (Eq, Show)
-
-data Template = TemplateId String
-              | TemplateDat Lit
-              | TemplateComp [TempElement]
-              | TemplateLit String
-  deriving (Eq, Show)
-
-data TempElement = PureTemp Template 
-                 | TempEllipses Template 
-  deriving (Eq, Show) 
-
 data Matched a = Matched (M.Map String (GenDatum a)) [Matched a]
   deriving (Eq, Show)
 
@@ -106,10 +89,6 @@ useTemplate (TemplateLit s) _ = Just $ SimpleDatum (Var s ())
 applyMacro :: SyntaxRule -> GenDatum () -> Maybe (GenDatum ())
 applyMacro s dat = match (pat s) dat >>= useTemplate (temp s)
 
-data SyntaxRule = SyntaxRule { key :: String
-                             , pat :: Pattern
-                             , temp :: Template}
-
 type MacroList = [SyntaxRule]
 
 applyMacros :: MacroList -> GenDatum () -> GenDatum ()
@@ -134,7 +113,6 @@ convDatum (CompoundDatum ( SimpleDatum (Var "set!" _)
   Assign (Var x ()) (convDatum y)
 convDatum (CompoundDatum (x: xs)) =
   Call (convDatum x) (map convDatum xs)
-
 
 isDef :: GenDatum a -> Bool
 isDef (CompoundDatum (SimpleDatum (Var "define" _) : _)) = True
@@ -167,15 +145,21 @@ applyMacrosDef ms = convDatumDef . applyMacros ms . convMacroDef
 
 applyMacrosProgram :: MacroList -> [CommOrDef] -> [CommOrDef]
 applyMacrosProgram ms xs = map (\x ->
-  case x of
-    Comm y -> Comm $ applyMacrosExpr ms y
-    Def y -> Def $ applyMacrosDef ms y) xs
+    case x of
+      Comm y -> Comm $ applyMacrosExpr (ms ++ newMacros) y
+      Def y -> Def $ applyMacrosDef (ms ++ newMacros) y) $ filter notDef xs
+  where
+    getSynRule (DefSyn rs) = rs
+    getSynRule _ = []
+    newMacros = concatMap getSynRule xs
+    notDef (DefSyn _) = False
+    notDef _ = True
+
 
 defaultMacros :: MacroList
-defaultMacros = 
+defaultMacros = []
   [ SyntaxRule {
-    key = "let"
-    , pat = 
+    pat = 
       PatEllipses 
         [ PatternLit "let" 
         , PatEllipses []  
