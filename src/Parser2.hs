@@ -100,7 +100,8 @@ data GenBody a = Body [GenDef a] [GenExpr a] deriving (Eq, Show)
 data GenDatum a = SimpleDatum (GenExpr a) | CompoundDatum [GenDatum a]
   deriving (Eq, Show)
 
-data GenCommOrDef a = Comm (GenExpr a) | Def (GenDef a) deriving (Eq, Show)
+data GenCommOrDef a = Comm (GenExpr a) 
+                    | Def (GenDef a) 
 
 type VarT = M.Map String Int
 

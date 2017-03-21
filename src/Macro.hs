@@ -37,8 +37,18 @@ data Pattern = PatternId String
              | PatternDat Lit 
              | PatternComp [Pattern]
              | PatternLit String
-             | Ellipses [Pattern] Pattern
+             | PatEllipses [Pattern] Pattern
   deriving (Eq, Show)
+
+data Template = TemplateId String
+              | TemplateDat Lit
+              | TemplateComp [TempElement]
+              | TemplateLit String
+  deriving (Eq, Show)
+
+data TempElement = PureTemp Template 
+                 | TempEllipses Template 
+  deriving (Eq, Show) 
 
 data Matched a = Matched (M.Map String (GenDatum a)) [Matched a]
   deriving (Eq, Show)
@@ -57,9 +67,9 @@ combine (Matched m1 l1) (Matched m2 l2) =
 -- | Fills in a pattern from a GenDatum that matches it
 --
 match :: Pattern -> GenDatum a -> Maybe (Matched a)
--- match (PatternComp [x, Ellipses]) (CompoundDatum ds) = 
+-- match (PatternComp [x, PatEllipses]) (CompoundDatum ds) = 
 --  Matched M.empty <$> traverse (match x) ds
-match (Ellipses patterns pattern) (CompoundDatum ds) =
+match (PatEllipses patterns pattern) (CompoundDatum ds) =
   let n = length patterns
   in  if length ds < n
       then Nothing
@@ -81,34 +91,30 @@ match (PatternLit s) (SimpleDatum (Var x _)) = if x == s
                                               else Nothing 
 match _ _ = Nothing
 
-getDat :: GenDatum () -> [GenDatum ()]
-getDat (CompoundDatum xs) = xs
-getDat _ = []
+useTemplateElem :: TempElement -> Matched () -> Maybe [GenDatum ()]
+useTemplateElem (PureTemp t) m = pure <$> useTemplate t m
+useTemplateElem (TempEllipses t) (Matched _ ls) = 
+  Just . catMaybes $ map (useTemplate t) ls
 
-useTemplate :: Pattern -> Matched () -> Maybe (GenDatum ())
---useTemplate (PatternComp [a, Ellipses]) (Matched m ls) =
---  CompoundDatum <$> (sequence . filter isJust) (map (useTemplate a) ls)
-useTemplate (Ellipses patterns final) m@(Matched hmap ls) = do
-  CompoundDatum ds <- useTemplate (PatternComp patterns) m
-  let es = catMaybes $ map (useTemplate final) ls
-  return (CompoundDatum (ds ++ es))
-useTemplate (PatternComp (x:xs)) m = 
-  let a = useTemplate x m
-      b = useTemplate (PatternComp xs) m
-  in  CompoundDatum <$> liftA2 (:) a (getDat <$> b)
-useTemplate (PatternComp []) m = Just $ CompoundDatum []
-useTemplate (PatternDat x) _ = Just $ SimpleDatum (Literal x)
-useTemplate (PatternId s) (Matched m l) = M.lookup s m
-useTemplate (PatternLit s) _ = Just $ SimpleDatum (Var s ())
+useTemplate :: Template -> Matched () -> Maybe (GenDatum ())
+useTemplate (TemplateComp xs) m = 
+  CompoundDatum . concat <$> mapM (flip useTemplateElem m) xs
+useTemplate (TemplateDat x) _ = Just $ SimpleDatum (Literal x)
+useTemplate (TemplateId s) (Matched m l) = M.lookup s m
+useTemplate (TemplateLit s) _ = Just $ SimpleDatum (Var s ())
 
-applyMacro :: String -> Pattern -> Pattern -> GenDatum () -> Maybe (GenDatum ())
-applyMacro key pat temp dat = match pat dat >>= useTemplate temp
+applyMacro :: SyntaxRule -> GenDatum () -> Maybe (GenDatum ())
+applyMacro s dat = match (pat s) dat >>= useTemplate (temp s)
 
-type MacroList = [(String, Pattern, Pattern)]
+data SyntaxRule = SyntaxRule { key :: String
+                             , pat :: Pattern
+                             , temp :: Template}
+
+type MacroList = [SyntaxRule]
 
 applyMacros :: MacroList -> GenDatum () -> GenDatum ()
 applyMacros ms ex = 
-  let conversions = map (\(k, p, t) -> applyMacro k p t ex) ms
+  let conversions = map (flip applyMacro ex) ms
   in  case take 1 $ catMaybes conversions of
         [x] ->  applyMacros ms x
         [] -> case ex of
@@ -152,11 +158,6 @@ convDatumBody (x:xs) =
   in  if isDef x
     then Body (convDatumDef x:ds) es
     else Body ds (convDatum x:es)
--- convDatumBody (CompoundDatum (x:xs)) = 
---   if isDef x 
---     then let  Body ds es = convDatumBody (CompoundDatum xs)
---          in   Body (convDatumDef x : ds) es
---     else Body [] (map convDatum (x:xs))  
 
 applyMacrosExpr :: MacroList -> GenExpr () -> GenExpr ()
 applyMacrosExpr ms = convDatum . applyMacros ms . convMacro
@@ -172,23 +173,26 @@ applyMacrosProgram ms xs = map (\x ->
 
 defaultMacros :: MacroList
 defaultMacros = 
-  [ ( "let"
-    , Ellipses 
+  [ SyntaxRule {
+    key = "let"
+    , pat = 
+      PatEllipses 
         [ PatternLit "let" 
-        , Ellipses []  
+        , PatEllipses []  
             (PatternComp [ PatternId "a"
                          , PatternId "b"
                          ])
         , PatternId "c"]
         (PatternId "d")
-    , Ellipses 
-        [ Ellipses 
-          [ PatternLit "lambda"
-          , Ellipses [] (PatternId "a")
-          , PatternId "c"
+    , temp = 
+      TemplateComp 
+        [ PureTemp $ TemplateComp
+          [ PureTemp $ TemplateLit "lambda"
+          , PureTemp $ TemplateComp $ [TempEllipses $ TemplateId "a"]
+          , PureTemp $ TemplateId "c"
+          , TempEllipses $ TemplateId "d"
           ]
-          (PatternId "d")
+        , TempEllipses $ TemplateId "b"
         ]
-        (PatternId "b")
-    )
+    }
   ]
