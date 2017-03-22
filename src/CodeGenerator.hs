@@ -177,8 +177,8 @@ addExpr (Cond a b c) =
     addInstructions  [ IABx  OpClosure n (inx !! 0) -- cond closure
                      , IABC  OpGetUpVal 0 0 0 -- pass env
                      , IABC  OpCall 0 1 2 -- call cond
-                     , IABC  OpLoadBool (n+1) 1 0 -- load true in reg n+1
-                     , IABC  OpEq 0 (n+1) n -- skip if reg n is true
+                     , IABC  OpLoadBool (n+1) 0 0 -- load false in reg n+1
+                     , IABC  OpEq 1 (n+1) n -- skip if reg n is not false
                      , IAsBx OpJmp 0 3 -- jump to false case
                      , IABx  OpClosure n (inx !! 1) -- exp1 closure
                      , IABC  OpGetUpVal 0 0 0 -- pass in env

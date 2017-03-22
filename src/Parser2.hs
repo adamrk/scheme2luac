@@ -20,7 +20,7 @@ data Token = Identifier String
            | Other String
             deriving (Eq, Show)
 
-exprKeywords = [ "quote", "lambda", "if", "set!", "begin", "cond", "and", "or"
+exprKeywords = [ "quote", "lambda", "if", "set!", "begin", "cond", "and"
                , "case", "let*", "letrec", "do", "delay", "quasiquote" 
                ]
 synKeywords = [ "else", "=>", "define", "unquote", "unquote-splicing" ]
@@ -205,7 +205,7 @@ data GenCommOrDef a = Comm (GenExpr a)
                     | Def (GenDef a) 
                     | DefSyn [SyntaxRule]
   deriving (Eq, Show)
-  
+
 type VarT = M.Map String Int
 
 type Expr = GenExpr ()

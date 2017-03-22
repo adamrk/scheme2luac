@@ -157,7 +157,7 @@ applyMacrosProgram ms xs = map (\x ->
 
 
 defaultMacros :: MacroList
-defaultMacros = []
+defaultMacros =
   [ SyntaxRule {
     pat = 
       PatEllipses 
