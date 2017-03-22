@@ -77,23 +77,33 @@ parToken =   fmap Identifier parIdent
 
 ------------------------- Parse Macros ------------------------------
 
-data Pattern = PatternId String 
+-- | This is the type that is used for pattern matching in a macro.
+--
+data Pattern = PatternId String -- a variable identifier (matches anything)
              | PatternDat Lit 
              | PatternComp [Pattern]
-             | PatternLit String
+             | PatternLit String -- an identifier that only matches itself
              | PatEllipses [Pattern] Pattern
   deriving (Eq, Show)
 
+-- | Macro template element to be filled in after the corresponding pattern 
+-- was matched against. It is either an template or a template with ellipses
+-- which is to be filled in 0 or more times. 
+--
 data TempElement = PureTemp Template 
                  | TempEllipses Template 
   deriving (Eq, Show) 
 
-data Template = TemplateId String
+-- | Template to fill in after a match.
+--
+data Template = TemplateId String -- variable to fill with matched data
               | TemplateDat Lit
               | TemplateComp [TempElement]
-              | TemplateLit String
+              | TemplateLit String -- literal identifier filled with itself
   deriving (Eq, Show)
 
+-- | Get a list of the variables used in a pattern.
+--
 getPatVars :: Pattern -> [String]
 getPatVars (PatternId s) = [s]
 getPatVars (PatternDat _) = []
@@ -118,7 +128,7 @@ parPattern lits =
   <|> try (fmap PatternDat parLitRaw)
   <|> try (do
     s <- token parIdent
-    if s `elem` lits
+    if s `elem` lits -- parse identifier as variable Id or literal?
     then return $ PatternLit s
     else return $ PatternId s)
   <|> unexpected "couldn't parse pattern"
@@ -140,7 +150,7 @@ parTemplate vars =
   <|> try (fmap TemplateDat parLitRaw)
   <|> try (do
     s <- token parIdent
-    if s `elem` vars
+    if s `elem` vars -- parse identifier as a var id or a literal id?
     then return $ TemplateId s
     else return $ TemplateLit s)
   <|> unexpected "couldn't parse template"
@@ -180,10 +190,13 @@ data Lit = LitBool Bool
          | LitStr String
           deriving (Eq, Show)
 
+-- | Data type for a Scheme expression. The a contains additional annotations.
+-- 
 data GenExpr a = Var String a
           | Literal Lit
           | Call (GenExpr a) [GenExpr a]
           | Lambda [GenExpr ()] (GenBody a) 
+            -- ^ first list is variabls, should only be Vars   
           | Cond (GenExpr a) (GenExpr a) (GenExpr a)
           | Assign (GenExpr ()) (GenExpr a)
           | DerivedExpr
@@ -191,21 +204,36 @@ data GenExpr a = Var String a
           | MacroBlock
            deriving (Eq, Show)
 
+-- | Scheme definition, with annotations in the a type.
+--
 data GenDef a = Def1 (GenExpr ()) (GenExpr a)
+              -- ^ first expr should only be a Var (the variable we define)
             | Def2 (GenExpr ()) [GenExpr ()] (GenBody a)
             | Def3 [GenDef a]
               deriving (Eq, Show)
 
+-- | Schem lambda body, with annotations in the a type.
+--
 data GenBody a = Body [GenDef a] [GenExpr a] deriving (Eq, Show)
 
+-- | Pure datum type. Anything that parses as a GenExpr should also parse as
+-- a GenDatum. This ignores all keywords and simple generates an AST with simple
+-- tokens or lists of tokens.
+--
 data GenDatum a = SimpleDatum (GenExpr a) | CompoundDatum [GenDatum a]
   deriving (Eq, Show)
 
+-- | Top Level piece of a scheme program. Either an expression, definition or 
+-- define-syntax.
+--
 data GenCommOrDef a = Comm (GenExpr a) 
                     | Def (GenDef a) 
                     | DefSyn [SyntaxRule]
   deriving (Eq, Show)
 
+-- | Map of variable names to scoping. Int = 0 indicates immediate environment and
+-- Int > 0 indicates the number of scopes outward.
+--
 type VarT = M.Map String Int
 
 type Expr = GenExpr ()
@@ -225,6 +253,9 @@ parExpr = parVar
         <|> try parCond
         <|> parAssign 
 
+-- | Parse a literal without wrapping, so it can be used for patterns,
+-- templates, or expressions.
+--
 parLitRaw :: Parser Lit
 parLitRaw = try (do
               x <- parToken
@@ -284,6 +315,7 @@ parVar = try $ do
                                 else empty
               _ -> empty
          <|> unexpected "expected variable"               
+
 
 parFormals :: Parser [Expr]
 parFormals = try $ (do
@@ -355,16 +387,22 @@ parProgram = many $ try (fmap Comm $ token parExpr)
 
 ---------------- Annotating functions ------------------------
 
+-- | Which variables are being defined in this definition?
+--
 definedVars :: GenDef a -> S.Set String
 definedVars (Def1 (Var s _) _) = S.singleton s
 definedVars (Def2 (Var s _) _ _) = S.singleton s
 definedVars (Def3 ds) = foldMap definedVars ds
 
+-- | Which variables appear free in the definition?
+--
 freeInDef :: GenDef a -> S.Set String
 freeInDef (Def1 _ e) = freeVarsEx e
 freeInDef (Def2 _ es b) = freeVars b `S.difference` foldMap freeVarsEx es
 freeInDef (Def3 es) = foldMap freeInDef es
 
+-- | Free variables in expression
+--
 freeVarsEx :: GenExpr a -> S.Set String
 freeVarsEx (Var s _) = S.singleton s
 freeVarsEx (Literal _) = S.empty
@@ -374,11 +412,16 @@ freeVarsEx (Lambda vars body) = S.difference (freeVars body)
 freeVarsEx (Cond x y z) = foldMap freeVarsEx [x, y, z]
 freeVarsEx (Assign a b) = S.union (freeVarsEx a) (freeVarsEx b)
 
+-- | Free variables in body
+--
 freeVars :: GenBody a -> S.Set String
 freeVars (Body defs exprs) = S.union (foldMap freeVarsEx exprs)
                                    (foldMap freeInDef defs)
                              `S.difference` foldMap definedVars defs
 
+-- | The variables defined at the top level are all put in a map with value
+-- 0 to indicate they are defined in the current environment.
+--
 topDefined :: [GenCommOrDef a] -> VarT
 topDefined xs = foldr helper (M.fromList []) (map getVars xs)
   where
@@ -388,11 +431,14 @@ topDefined xs = foldr helper (M.fromList []) (map getVars xs)
     getVars (Comm _) = S.empty
     getVars (Def d) = definedVars d
 
+-- | Given an annotation of variable environments, extend it to an expression
+-- 
 annotateEx :: VarT -> GenExpr a -> AnnExpr
 annotateEx t (Var s _) = Var s t
 annotateEx _ (Literal x) = Literal x
 annotateEx t (Call f xs) = Call (annotateEx t f) (map (annotateEx t) xs)
 annotateEx t (Lambda es b) = Lambda es (annotateBody newt b)
+ -- ^ increase the scope by 1 for each var not in es.
   where
     newt = M.unionWith min 
             ((+1) <$> t) 

@@ -161,9 +161,14 @@ inst2int ins@(IAsBx op a b) = fmap fromIntegral $ sum <$> sequence
                             fmap ((2^6*)) $ validA a,
                             fmap (((2^14)*) . (+131071)) $ validsBx b]
 
+-- | The number of registers needed by a B or C code. If the most significant bit
+-- is set it indicates a constants and therefore doesn't need a register.
+--
 rk :: Int -> Int
 rk n = if n >= 256 then 0 else n
 
+-- | Return the maximum number of registers needed for the instructions
+--
 maxReg :: LuaInstruction -> Int
 maxReg (IABx _ a _) = a
 maxReg (IAsBx OpJmp _ _) = 0
@@ -261,76 +266,6 @@ luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
             [0x08] ++ -- size of lua_Number (bytes)
             [0x00]    -- integral flag for floating point
 
-luaFunc :: LuaFunc -- Example function to test
-luaFunc = LuaFunc {source = "foo", startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=10, 
-                   instructions=[ IABC  OpLoadNil 0 1 0
-                                , IABC  OpEq 1 0 1
-                                , IAsBx OpJmp 0 1
-                                , IAsBx OpJmp 0 3
-                                , IABx  OpGetGlobal 0 0
-                                , IABx  OpLoadK 1 1
-                                , IABC  OpCall 0 2 1
-                                , IABC  OpReturn 0 1 0
-                                ], 
-                   
-                   constants=   [ LuaString "print"
-                                , LuaNumber 5.0
-                                , LuaNumber 6.0],
-                   
-                   functions=   []}
-
-smallFunc = LuaFunc{ source="@test.lua\0", startline=0, endline=0, upvals=1,
-                                  params=0, vararg=0, maxstack=3,
-            instructions = [
-                           --   IABC  OpGetUpVal 0 0 0
-                           -- , IABC  OpSetTable 0 256 257
-                           -- , IABx  OpGetGlobal 1 2
-                           -- , IABC  OpGetTable 2 0 256
-                           -- , IABC  OpCall 1 2 1
-                            IABC  OpReturn 0 1 0
-                           ],
-            constants =    [ 
-                           --   LuaNumber 0
-                           -- , LuaString "bar"
-                           -- , LuaString "print"
-                           ],
-            functions =    []}
-
-luaFunc' :: LuaFunc -- Example function to test
-luaFunc' = LuaFunc { source="@qux\0", startline=0, endline=0, upvals=0, params=0, vararg=2,
-                   maxstack=3, 
-                   instructions=[ 
-                                  IABC  OpNewTable 0 0 0
-                                , IABC  OpSetTable 0 256 257
-                                , IABC  OpSetTable 0 260 257 
-                                , IABx  OpClosure 1 0
-                                , IABC  OpMove 0 0 0
-                                -- , IABx  OpSetGlobal 1 2
-                                -- , IABx  OpGetGlobal 1 3
-                                -- , IABx  OpGetGlobal 2 2
-                                , IABC  OpCall 1 1 1
-                                , IABx  OpGetGlobal 1 3 
-                                , IABC  OpGetTable 2 0 256
-                                , IABC  OpCall 1 2 1
-                                , IABx  OpGetGlobal 1 3
-                                , IABC  OpGetTable 2 0 260
-                                , IABC  OpCall 1 2 1
-                                , IABx  OpGetGlobal 1 3
-                                , IABC  OpMove 2 0 0
-                                , IABC  OpCall 1 2 1
-                                , IABC  OpReturn 0 1 0
-                                ], 
-                   
-                   constants=   [ LuaNumber 0
-                                , LuaString "foo"
-                                , LuaString "func"
-                                , LuaString "print"
-                                , LuaNumber 1
-                                , LuaString "bar"],
-                   
-                   functions=   [smallFunc]}
-
 finalBuilder :: LuaFunc -> Maybe Builder
 finalBuilder f = (fmap mconcat) . sequence $
                  [Just $ foldMap word8 luaHeader, -- header
@@ -341,8 +276,3 @@ finalBuilder f = (fmap mconcat) . sequence $
 -- Write bytestring to file for testing
 writeBuilder :: String -> Builder -> IO ()
 writeBuilder file = BL.writeFile file . toLazyByteString
-
-testOutput :: IO ()
-testOutput = case finalBuilder luaFunc' of 
-  Just bs -> writeBuilder "temp" bs
-  Nothing -> print "error completing builder"

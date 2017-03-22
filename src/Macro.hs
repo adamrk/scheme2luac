@@ -5,6 +5,9 @@ import qualified Data.Map as M
 import Data.Maybe (catMaybes)
 import Control.Applicative (liftA2)
 
+-- | Convert an expression to pure datum. TODO: change the name of this 
+-- function.
+--
 convMacro :: GenExpr () -> GenDatum ()
 convMacro (Var s a) = SimpleDatum (Var s a)
 convMacro (Literal x) = SimpleDatum (Literal x)
@@ -33,9 +36,17 @@ convMacroDef (Def2 x ys b) = CompoundDatum $ [ SimpleDatum (Var "define" ())
 convMacroDef (Def3 ds) = CompoundDatum $ SimpleDatum (Var "begin" ()) : 
   map convMacroDef ds                                      
 
+-- | Result of matching a pattern with a datum. If a variable appears without
+-- in ellipses in the pattern it will show up in the map with the datum it
+-- matched against. If a variable has ellipses it will show up in the lists with
+-- each datum it matched with.
+--
 data Matched a = Matched (M.Map String (GenDatum a)) [Matched a]
   deriving (Eq, Show)
 
+-- | zipWith, but we take values from the longer list after the shorter list has
+-- ended.
+--
 extZipWith :: (a -> a -> a) -> [a] -> [a] -> [a]
 extZipWith f (b:bs) (c:cs) = f b c : extZipWith f bs cs
 extZipWith f [] cs = cs
@@ -50,8 +61,6 @@ combine (Matched m1 l1) (Matched m2 l2) =
 -- | Fills in a pattern from a GenDatum that matches it
 --
 match :: Pattern -> GenDatum a -> Maybe (Matched a)
--- match (PatternComp [x, PatEllipses]) (CompoundDatum ds) = 
---  Matched M.empty <$> traverse (match x) ds
 match (PatEllipses patterns pattern) (CompoundDatum ds) =
   let n = length patterns
   in  if length ds < n
@@ -74,11 +83,15 @@ match (PatternLit s) (SimpleDatum (Var x _)) = if x == s
                                               else Nothing 
 match _ _ = Nothing
 
+-- | Fill in template Element with matched data. If it is an ellipses element,
+-- fill in with each Matched in the list and take all the results that worked.
+--
 useTemplateElem :: TempElement -> Matched () -> Maybe [GenDatum ()]
 useTemplateElem (PureTemp t) m = pure <$> useTemplate t m
 useTemplateElem (TempEllipses t) (Matched _ ls) = 
   Just . catMaybes $ map (useTemplate t) ls
 
+-- | fill in template with Matched data.
 useTemplate :: Template -> Matched () -> Maybe (GenDatum ())
 useTemplate (TemplateComp xs) m = 
   CompoundDatum . concat <$> mapM (flip useTemplateElem m) xs
@@ -86,11 +99,17 @@ useTemplate (TemplateDat x) _ = Just $ SimpleDatum (Literal x)
 useTemplate (TemplateId s) (Matched m l) = M.lookup s m
 useTemplate (TemplateLit s) _ = Just $ SimpleDatum (Var s ())
 
+-- | Match against the pattern in the SyntaxRule and then fill in the template
+-- from the match.
+--
 applyMacro :: SyntaxRule -> GenDatum () -> Maybe (GenDatum ())
 applyMacro s dat = match (pat s) dat >>= useTemplate (temp s)
 
 type MacroList = [SyntaxRule]
 
+-- | Try to appyl multiple SyntaxRules and when one fails, recursively apply
+-- them to the children in the AST.
+--
 applyMacros :: MacroList -> GenDatum () -> GenDatum ()
 applyMacros ms ex = 
   let conversions = map (flip applyMacro ex) ms

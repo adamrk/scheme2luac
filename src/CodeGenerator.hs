@@ -15,10 +15,13 @@ import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
 
+-- | An unfinished Lua Function to be built upon.
+--
 data PartialLuaFunc = PartialLuaFunc  { inst :: [LuaInstruction]
                                       , cnst :: [LuaConst]
                                       , funcs :: [LuaFunc]
                                       , next :: Int
+                                      -- ^ next open register
                                       } deriving (Eq, Show)
 
 emptyPartialFunc = PartialLuaFunc [] [] [] 0
@@ -27,6 +30,8 @@ instance Monoid (State PartialLuaFunc ()) where
   mempty = return ()
   mappend = (>>)
 
+-- | Find the index of a value in a list and append the value if not present.
+--
 addSingle :: (Eq a) => a -> [a] -> (Int, [a])
 addSingle a xs = 
   let n = length xs
@@ -35,6 +40,8 @@ addSingle a xs =
     Nothing -> (n, xs ++ [a])
     Just m -> (m, xs)
 
+-- | Get index for multiple elements, appending them if not present.
+--
 addAndGetNewInx :: (Eq a) => [a] -> [a] -> ([Int], [a])
 addAndGetNewInx (x:xs) ys = 
   let (n, zs) = addSingle x ys
@@ -72,15 +79,21 @@ addInstructions is = state $ \f -> ((), PartialLuaFunc
   , next = next f
   })
 
+-- | Increment the next open register.
+--
 incNext :: State PartialLuaFunc ()
 incNext = state $ \f -> 
   let newf = PartialLuaFunc {inst=inst f, cnst=cnst f, funcs=funcs f,
                              next=next f + 1}
   in ((), newf)
 
+-- | Get the next open register
+--
 getNext :: State PartialLuaFunc Int
 getNext = state $ \f -> (next f, f)
 
+-- | Set the next open register
+--
 setNext :: Int -> State PartialLuaFunc ()
 setNext n = state $ \f -> ((), PartialLuaFunc
   { inst = inst f
@@ -89,6 +102,8 @@ setNext n = state $ \f -> ((), PartialLuaFunc
   , next = n
   })
 
+-- | If the last instruction is a Call, change it to a TailCall.
+--
 changeToTail :: State PartialLuaFunc ()
 changeToTail = state $ \f -> 
   let
@@ -188,6 +203,7 @@ addExpr (Cond a b c) =
                      , IABC  OpCall n 1 0 -- get expr
                      ]
     incNext
+
 
 completeFunc :: String -> PartialLuaFunc -> LuaFunc
 completeFunc s f = LuaFunc { startline=0, endline=0, upvals=1, params=0,
