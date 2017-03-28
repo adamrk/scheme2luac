@@ -251,9 +251,10 @@ luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0,
 toFunc :: AnnExpr -> LuaFunc
 toFunc x = completeFunc name $ 
   execState (do
+    n <- getNext
     addExpr x
     changeToTail
-    addInstructions [IABC OpReturn 0 0 0])
+    addInstructions [IABC OpReturn n 0 0])
     emptyPartialFunc
   where
     name = case x of
@@ -308,23 +309,24 @@ toFuncLambda vars f = let nvars = length vars
 -- |The lua chunk that evaluates a body simply evaluates each def or expr in
 -- turn and then returns the last one.
 --
+addBody :: AnnBody -> State PartialLuaFunc ()
+addBody (Body ds es) = do
+  n <- getNext
+  dinx <- addFunctions (map toFuncDef ds)
+  einx <- addFunctions (map toFunc es)
+  mapM_ (\i -> addInstructions [ IABx OpClosure n i
+                               , IABC OpGetUpVal 0 0 0
+                               , IABC OpCall n 1 2
+                               ]) (dinx ++ einx)  
+
 toFuncBody :: AnnBody -> LuaFunc
-toFuncBody (Body ds es) = LuaFunc{ startline=0, endline=0, upvals=1, params=0,
-                                    vararg=0, maxstack=1, source="@inBody\0",
-            instructions = concatMap (\i -> 
-                             [ IABx  OpClosure 0 i -- get def or expr
-                             , IABC  OpGetUpVal 0 0 0 -- pass env
-                             , IABC  OpCall 0 1 2
-                             ]) [0.. n - 2]
-                          ++ [ IABx  OpClosure 0 (n - 1)
-                             , IABC  OpGetUpVal 0 0 0
-                             , IABC  OpTailCall 0 0 0
-                             , IABC  OpReturn 0 0 0
-                             ],
-            constants    = [],
-            functions    = map toFuncDef ds ++ map toFunc es}
-  where
-    n = length ds + length es
+toFuncBody b = completeFunc "@inBody\0" $
+  execState (do
+    n <- getNext
+    addBody b
+    changeToTail
+    addInstructions [IABC OpReturn n 0 0]
+    ) emptyPartialFunc
 
 -- | Add a definition to a PartialFunc.
 -- 
