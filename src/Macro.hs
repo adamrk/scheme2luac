@@ -178,24 +178,36 @@ applyMacrosProgram ms xs = map (\x ->
 defaultMacros :: MacroList
 defaultMacros =
   [ SyntaxRule {
-    pat = 
-      PatEllipses 
-        [ PatternLit "let" 
-        , PatEllipses []  
-            (PatternComp [ PatternId "a"
-                         , PatternId "b"
-                         ])
-        , PatternId "c"]
-        (PatternId "d")
+      pat =
+        PatEllipses
+          [ PatternLit "let"
+          , PatEllipses []
+              (PatternComp [ PatternId "a"
+                           , PatternId "b"
+                           ])
+          , PatternId "c"]
+          (PatternId "d")
     , temp = 
-      TemplateComp 
-        [ PureTemp $ TemplateComp
-          [ PureTemp $ TemplateLit "lambda"
-          , PureTemp $ TemplateComp $ [TempEllipses $ TemplateId "a"]
-          , PureTemp $ TemplateId "c"
-          , TempEllipses $ TemplateId "d"
+        TemplateComp
+          [ PureTemp $ TemplateComp
+            [ PureTemp $ TemplateLit "lambda"
+            , PureTemp $ TemplateComp $ [TempEllipses $ TemplateId "a"]
+            , PureTemp $ TemplateId "c"
+            , TempEllipses $ TemplateId "d"
+            ]
+          , TempEllipses $ TemplateId "b"
           ]
-        , TempEllipses $ TemplateId "b"
-        ]
+    }
+
+  , SyntaxRule {
+      pat =
+        PatternComp [ PatternLit "delay"
+                    , PatternId "a"
+                    ]
+    , temp =
+        TemplateComp [ PureTemp $ TemplateLit "lambda"
+                     , PureTemp $ TemplateComp []
+                     , PureTemp $ TemplateId "a"
+                     ]
     }
   ]

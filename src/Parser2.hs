@@ -21,7 +21,7 @@ data Token = Identifier String
             deriving (Eq, Show)
 
 exprKeywords = [ "quote", "lambda", "if", "set!", "begin", "cond", "and"
-               , "case", "let*", "letrec", "do", "delay", "quasiquote" 
+               , "case", "let*", "letrec", "do", "quasiquote"
                ]
 synKeywords = [ "else", "=>", "define", "unquote", "unquote-splicing" ]
               ++ exprKeywords

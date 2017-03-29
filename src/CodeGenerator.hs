@@ -499,6 +499,14 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                    ],
                     constants    = [],
                     functions    = []})
+             , ("force", LuaFunc { startline=0, endline=0, upvals=0,
+                                   params=1, vararg=0, maxstack=1,
+                                   source="@primforce\0",
+                    instructions = [ IABC OpTailCall 0 1 0
+                                   , IABC OpReturn 0 0 0
+                                   ],
+                    constants    = [],
+                    functions    = []})
             ]
 
 
