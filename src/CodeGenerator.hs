@@ -123,17 +123,17 @@ changeToTail = state $ \f ->
 -- the evaluated expr in the register indicated by the int
 --
 addExpr :: AnnExpr -> State PartialLuaFunc ()
-addExpr (Var s) = do
+addExpr (Var s label) = do
   inxs <- addConstants [ LuaString s ]
   let i = head inxs
   n <- getNext
-  addInstructions [ IABC  OpGetUpVal n 0 0 -- env table
-                  , IABC  OpGetTable n n (256 + i) -- get s from env
-                  , IABC  OpLoadNil (n+1) (n+1) 0 -- nil in n+1
-                  , IABC  OpEq 0 n (n+1) -- if lookup was nil PC++
-                  , IAsBx OpJmp 0 1
-                  , IABx  OpGetGlobal n i
-                  ]
+  case label of
+    Local ->
+      addInstructions [ IABC  OpGetUpVal n 0 0 -- env table
+                      , IABC  OpGetTable n n (256 + i) -- get s from env
+                      ]
+    Global -> 
+      addInstructions [ IABx  OpGetGlobal n i ]
   incNext
 
 addExpr (Literal (LitBool b)) =
@@ -165,10 +165,10 @@ addExpr (Call f xs) =
     addInstructions [ IABC OpCall n (nvars + 1) 2 ]
     setNext (n + 1)
 
-addExpr (Lambda vs b a) =
+addExpr (Lambda vs b) =
   do
     n <- getNext
-    inx <- addFunctions [toFuncLambda vs b a]
+    inx <- addFunctions [toFuncLambda vs b]
     addInstructions [ IABx OpClosure n (head inx)
                     , IABC OpGetUpVal 0 0 0
                     ]
@@ -219,29 +219,6 @@ completeTopLevel f = LuaFunc { startline=0, endline=0, upvals=0, params=0,
                               map maxReg (inst f)
                            }
 
--- | Lua chunk that takes 3 parameters: environment table, variable string, and 
--- the number of environments to go up. It returns the value at the string in 
--- that environment.
---
--- luaLookup :: LuaFunc
--- luaLookup = LuaFunc { startline=0, endline=0, upvals=0, params=3, vararg=0,
---                       maxstack=8, source="@lookup\0",
---     instructions =    [ IABx  OpLoadK 3 1 -- 1 for init
---                       , IABC  OpMove 4 2 0 -- 3rd param for limit
---                       , IABx  OpLoadK 5 1 -- 1 for step
---                       , IABC  OpMove 7 0 0 -- env table from 1st param
---                       , IAsBx OpForPrep 3 1
---                       , IABC  OpGetTable 7 7 256 -- get next environment
---                       , IAsBx OpForLoop 3 (-2)
---                       , IABC  OpGetTable 0 7 1 -- lookup 2nd param
---                       , IABC  OpReturn 0 2 0
---                       ],
---     constants =       [ LuaNumber 0
---                       , LuaNumber 1
---                       ],
---     functions =       []
---                     }
-
 -- | Converts an annotated scheme expression into a Lua chunk. The chunk takes 
 -- no parameters and a single upval which is the evaluation environment. When 
 -- called the chunk will return the value that the expression evaluates to.
@@ -256,13 +233,13 @@ toFunc x = completeFunc name $
     emptyPartialFunc
   where
     name = case x of
-      (Var s) -> "@var_" ++ show s ++ "\0"
+      (Var s _) -> "@var_" ++ show s ++ "\0"
       (Literal (LitBool b)) -> "@litBool_" ++ show b ++ "\0"
       (Literal (LitChar c)) -> "@litChar_" ++ show c ++ "\0"
       (Literal (LitNum n)) -> "@litNum_" ++ show n ++ "\0"
       (Literal (LitStr s)) -> "@litStr_" ++ show s ++ "\0"
       (Call _ _) -> "@call\0"
-      (Lambda _ _ _) -> "@lambda\0"
+      (Lambda _ _) -> "@lambda\0"
       (Cond _ _ _) -> "@cond\0"
       (Assign _ _) -> "@assign\0"
 
@@ -278,16 +255,17 @@ toFuncDef x = completeFunc name $
   where
     name = case x of 
       (Def1 x _) -> "@def1_" ++ show x ++ "\0"
-      (Def2 x _ _ _) -> "@def2_" ++ show x ++ "\0"
+      (Def2 x _ _) -> "@def2_" ++ show x ++ "\0"
       (Def3 _) -> "@def3\0" 
 
-addLambda :: [Expr] -> AnnBody -> S.Set String -> State PartialLuaFunc ()
-addLambda vars f freeVars = do
+addLambda :: [Expr] -> AnnBody -> State PartialLuaFunc ()
+addLambda vars f = do
   n <- getNext
   let nVars = length vars
   let varStart = n - nVars
-  freeVarInxs <- addConstants (map LuaString . S.toList $ freeVars)
-  varInxs <- addConstants $ map (\(Var s) -> LuaString s) vars
+  freeVarInxs <- addConstants 
+    (map LuaString . S.toList $ freeVarsEx (Lambda vars f))
+  varInxs <- addConstants $ map (\(Var s _) -> LuaString s) vars
   funcInxs <- addFunctions [toFuncBody f]
   addInstructions $ [ IABC OpNewTable n 0 0 -- new env
                     , IABC OpGetUpVal (n+1) 0 0 -- old env
@@ -303,39 +281,16 @@ addLambda vars f freeVars = do
                       , IABC OpCall (n+1) 1 0 -- call f
                       ]
 
-toFuncLambda :: [Expr] -> AnnBody -> S.Set String -> LuaFunc
-toFuncLambda vars f freeVars =
+toFuncLambda :: [Expr] -> AnnBody -> LuaFunc
+toFuncLambda vars f =
   completeFuncWithParam (fromIntegral $ length vars) "@lambdabody\0" $
     execState (do
       let n = length vars
       setNext n
-      addLambda vars f freeVars
+      addLambda vars f
       changeToTail
       addInstructions [ IABC OpReturn n 0 0 ]
       ) emptyPartialFunc
-
--- toFuncLambda :: [Expr] -> AnnBody -> S.Set String -> LuaFunc
--- toFuncLambda vars f freeVars = let nvars = length vars
---   in
---                   LuaFunc{ startline=5, endline=5, upvals=1,
---                            params = fromIntegral nvars, vararg=0,
---                            maxstack = fromIntegral nvars + 2,
---                            source="@lambdabody\0",
---       instructions = [ IABC  OpNewTable nvars 0 0 -- new env after params
---                      , IABC  OpGetUpVal (nvars+1) 0 0 -- old env
---                      , IABC  OpSetTable nvars (nvars+256) (nvars+1)
---                          -- point new env to old
---                      ] ++
---                         (map (\x -> IABC OpSetTable nvars (256+x) x)
---                         -- ^ set params in new env
---                           [0..nvars-1]) ++
---                      [ IABx  OpClosure (nvars+1) 0 -- closure for f
---                      , IABC  OpMove 0 nvars 0 -- pass in new env
---                      , IABC  OpTailCall (nvars+1) 1 0 -- eval f
---                      , IABC  OpReturn (nvars+1) 0 0
---                      ],
---       constants    = map (\(Var x) -> LuaString x) vars ++ [LuaNumber 0],
---       functions    = [toFuncBody f]}
 
 -- |The lua chunk that evaluates a body simply evaluates each def or expr in
 -- turn and then returns the last one.
@@ -362,7 +317,7 @@ toFuncBody b = completeFunc "@inBody\0" $
 -- | Add a definition to a PartialFunc.
 -- 
 addDef :: AnnDef -> State PartialLuaFunc ()
-addDef (Def1 (Var x) e) = do
+addDef (Def1 (Var x _) e) = do
   inx <- addConstants [LuaString x]
   n <- getNext
   addInstructions [ IABC OpGetUpVal n 0 0 ]
@@ -371,7 +326,7 @@ addDef (Def1 (Var x) e) = do
   addInstructions [ IABC OpSetTable n (256 + head inx) (n+1) ]
   setNext n
 
-addDef (Def2 x vs b a) = addDef $ Def1 x (Lambda vs b a)  
+addDef (Def2 x vs b) = addDef $ Def1 x (Lambda vs b)  
 addDef (Def3 ds) = foldMap addDef ds
 
 addProgram :: [CommOrDef] -> State PartialLuaFunc ()

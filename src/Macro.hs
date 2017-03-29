@@ -9,31 +9,31 @@ import Control.Applicative (liftA2)
 -- function.
 --
 convMacro :: GenExpr () -> GenDatum ()
-convMacro (Var s) = SimpleDatum (Var s)
+convMacro (Var s ()) = SimpleDatum (Var s ())
 convMacro (Literal x) = SimpleDatum (Literal x)
 convMacro (Call x xs) = CompoundDatum $ convMacro x : map convMacro xs
-convMacro (Lambda vs b _) = 
+convMacro (Lambda vs b) = 
   let bs = convMacroBody b
-  in  CompoundDatum $ SimpleDatum (Var "lambda")
+  in  CompoundDatum $ SimpleDatum (Var "lambda" ())
       : CompoundDatum (map convMacro vs) : bs
-convMacro (Cond a b c) = CompoundDatum $ SimpleDatum (Var "if")
+convMacro (Cond a b c) = CompoundDatum $ SimpleDatum (Var "if" ())
   : convMacro a : convMacro b : [convMacro c]
-convMacro (Assign a b) = CompoundDatum $ SimpleDatum (Var "set!")
+convMacro (Assign a b) = CompoundDatum $ SimpleDatum (Var "set!" ())
   : convMacro a : [convMacro b]
 
 convMacroBody :: GenBody () -> [GenDatum ()]
 convMacroBody (Body ds es) = map convMacroDef ds ++ map convMacro es
 
 convMacroDef :: GenDef () -> GenDatum ()
-convMacroDef (Def1 x y) = CompoundDatum $ [ SimpleDatum (Var "define")
+convMacroDef (Def1 x y) = CompoundDatum $ [ SimpleDatum (Var "define" ())
                                           , SimpleDatum x
                                           , convMacro y
                                           ]
-convMacroDef (Def2 x ys b _) = CompoundDatum $ [ SimpleDatum (Var "define")
+convMacroDef (Def2 x ys b) = CompoundDatum $ [ SimpleDatum (Var "define" ())
                                                , CompoundDatum $ SimpleDatum x :
                                                   map SimpleDatum ys
                                                ] ++ convMacroBody b
-convMacroDef (Def3 ds) = CompoundDatum $ SimpleDatum (Var "begin") : 
+convMacroDef (Def3 ds) = CompoundDatum $ SimpleDatum (Var "begin" ()) : 
   map convMacroDef ds                                      
 
 -- | Result of matching a pattern with a datum. If a variable appears without
@@ -78,7 +78,7 @@ match (PatternDat x) (SimpleDatum (Literal y)) =
     then Just $ Matched M.empty []
     else Nothing
 match (PatternId s) x = Just $ Matched (M.singleton s x) []
-match (PatternLit s) (SimpleDatum (Var x)) = if x == s 
+match (PatternLit s) (SimpleDatum (Var x _)) = if x == s 
                                               then Just $ Matched M.empty [] 
                                               else Nothing 
 match _ _ = Nothing
@@ -97,7 +97,7 @@ useTemplate (TemplateComp xs) m =
   CompoundDatum . concat <$> mapM (flip useTemplateElem m) xs
 useTemplate (TemplateDat x) _ = Just $ SimpleDatum (Literal x)
 useTemplate (TemplateId s) (Matched m l) = M.lookup s m
-useTemplate (TemplateLit s) _ = Just $ SimpleDatum (Var s)
+useTemplate (TemplateLit s) _ = Just $ SimpleDatum (Var s ())
 
 -- | Match against the pattern in the SyntaxRule and then fill in the template
 -- from the match.
@@ -121,31 +121,31 @@ applyMacros ms ex =
 
 convDatum :: GenDatum () -> GenExpr ()
 convDatum (SimpleDatum x) = x
-convDatum (CompoundDatum (SimpleDatum (Var "if") : [a,b,c])) = 
+convDatum (CompoundDatum (SimpleDatum (Var "if" ()) : [a,b,c])) = 
   Cond (convDatum a) (convDatum b) (convDatum c)
-convDatum (CompoundDatum (SimpleDatum (Var "lambda") 
+convDatum (CompoundDatum (SimpleDatum (Var "lambda" ()) 
   : (CompoundDatum xs) : ys)) = 
-    Lambda (map convDatum xs) (convDatumBody ys) ()
-convDatum (CompoundDatum ( SimpleDatum (Var "set!") 
-                         : SimpleDatum (Var x) 
+    Lambda (map convDatum xs) (convDatumBody ys)
+convDatum (CompoundDatum ( SimpleDatum (Var "set!" ()) 
+                         : SimpleDatum (Var x ()) 
                          : [y])) = 
-  Assign (Var x) (convDatum y)
+  Assign (Var x ()) (convDatum y)
 convDatum (CompoundDatum (x: xs)) =
   Call (convDatum x) (map convDatum xs)
 
 isDef :: GenDatum a -> Bool
-isDef (CompoundDatum (SimpleDatum (Var "define") : _)) = True
-isDef (CompoundDatum (SimpleDatum (Var "begin") : xs)) = and $ map isDef xs
+isDef (CompoundDatum (SimpleDatum (Var "define" _) : _)) = True
+isDef (CompoundDatum (SimpleDatum (Var "begin" _ ) : xs)) = and $ map isDef xs
 isDef _ = False
 
 convDatumDef :: GenDatum () -> GenDef ()
-convDatumDef (CompoundDatum (SimpleDatum (Var "begin") : xs)) = 
+convDatumDef (CompoundDatum (SimpleDatum (Var "begin" ()) : xs)) = 
   Def3 $ map convDatumDef xs
-convDatumDef (CompoundDatum (SimpleDatum (Var "define") : 
-               CompoundDatum (SimpleDatum (Var x) : vs) :
+convDatumDef (CompoundDatum (SimpleDatum (Var "define" ()) : 
+               CompoundDatum (SimpleDatum (Var x ()) : vs) :
                b)) = 
-  Def2 (Var x) (map convDatum vs) (convDatumBody b) ()
-convDatumDef (CompoundDatum (SimpleDatum (Var "define") : x : [y])) =
+  Def2 (Var x ()) (map convDatum vs) (convDatumBody b)
+convDatumDef (CompoundDatum (SimpleDatum (Var "define" ()) : x : [y])) =
   Def1 (convDatum x) (convDatum y)
 
 convDatumBody :: [GenDatum ()] -> GenBody ()
