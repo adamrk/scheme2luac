@@ -122,29 +122,34 @@ opFormat (IABC _ _ _ _) = ABC
 opFormat (IABx _ _ _) = ABx
 opFormat (IAsBx _ _ _) = AsBx
 
-validOpFormat :: LuaInstruction -> Maybe Int
+validOpFormat :: LuaInstruction -> Either String Int
 validOpFormat ins = if M.lookup opCode formats == Just (opFormat ins) 
-                                  then Just (fromEnum opCode)
-                                  else Nothing
+                                  then Right (fromEnum opCode)
+                                  else Left $ "wrong opcode " ++ show ins
                     where opCode = op ins
 
-validA :: Int -> Maybe Int
-validA n = if 0 <= n && n < (2^8) then Just n else Nothing
+validA :: Int -> Either String Int
+validA n = if 0 <= n && n < (2^8) then Right n else
+  Left $ "invalid A: " ++ show n
 
-validB :: Int -> Maybe Int
-validB n = if 0 <= n && n < (2^9) then Just n else Nothing
+validB :: Int -> Either String Int
+validB n = if 0 <= n && n < (2^9) then Right n else
+  Left $ "invalid B: " ++ show n
 
-validC :: Int -> Maybe Int
-validC = validB
+validC :: Int -> Either String Int
+validC n = if 0 <= n && n < (2^9) then Right n else
+  Left $ "invalid C: " ++ show n
 
-validBx :: Int -> Maybe Int
-validBx n = if 0 <= n && n < (2^18) then Just n else Nothing
+validBx :: Int -> Either String Int
+validBx n = if 0 <= n && n < (2^18) then Right n else
+  Left $ "invalid Bx: " ++ show n
 
-validsBx :: Int -> Maybe Int
-validsBx n = if (-131071) <= n && n < (2^18 - 131071) then Just n else Nothing
+validsBx :: Int -> Either String Int
+validsBx n = if (-131071) <= n && n < (2^18 - 131071) then Right n else
+  Left $ "invalid sBx: " ++ show n
  -- The sBx entry represents negatives with a -131071 bias
 
-inst2int :: LuaInstruction -> Maybe Word32
+inst2int :: LuaInstruction -> Either String Word32
 inst2int ins@(IABC op a b c) = fmap fromIntegral $ sum <$> sequence 
                                 [validOpFormat ins, 
                                 fmap ((2^6)*) $ validA a,  
@@ -216,31 +221,31 @@ maxReg (IABC OpTForLoop a _ c) = a + c + 2
 maxReg (IABC OpSetList a b _) = a + b
 
 class ToByteString a where
-  toBS :: a -> Maybe Builder
+  toBS :: a -> Either String Builder
 
 instance ToByteString Char where
-  toBS c = Just $ stringUtf8 $ [c]
+  toBS c = Right $ stringUtf8 $ [c]
 
 instance ToByteString LuaInstruction where
   toBS = (fmap word32LE) . inst2int
 
 instance ToByteString LuaConst where
-  toBS LuaNil = Just $ word8 0
-  toBS (LuaBool b) = Just $ word8 1 `mappend` word32LE (if b then 1 else 0) 
+  toBS LuaNil = Right $ word8 0
+  toBS (LuaBool b) = Right $ word8 1 `mappend` word32LE (if b then 1 else 0) 
     -- how is bool is encoded as 0 and 1 in WHAT FORMAT ???
-  toBS (LuaNumber n) = Just $ word8 3 `mappend` doubleLE n
-  toBS (LuaString str) = Just $ word8 4 `mappend` word32LE sz `mappend` strbytes
+  toBS (LuaNumber n) = Right $ word8 3 `mappend` doubleLE n
+  toBS (LuaString str) = Right $ word8 4 `mappend` word32LE sz `mappend` strbytes
     where sz = fromIntegral $ length str + 1
           strbytes = stringUtf8 $ str ++ "\0"
 
 instance (ToByteString a) => ToByteString [a] where
-  toBS xs = mappend <$> Just (word32LE (fromIntegral $ length xs)) <*> 
+  toBS xs = mappend <$> Right (word32LE (fromIntegral $ length xs)) <*> 
             (fmap mconcat) (traverse toBS $ xs)
 
 instance ToByteString LuaFunc where
   toBS func = (fmap mconcat) . sequence $
                                   (toBS $ source func) 
-                    :  map Just [ word32LE (startline func), 
+                    : map Right [ word32LE (startline func), 
                                   word32LE (endline func),
                                   word8 (upvals func),
                                   word8 (params func),
@@ -249,9 +254,9 @@ instance ToByteString LuaFunc where
                     ++          [ toBS $ instructions func,
                                   toBS $ constants func,
                                   toBS $ functions func]
-                    ++ map Just [ word32LE 0,
-                                  word32LE 0,
-                                  word32LE 0]       
+                    ++ map Right [ word32LE 0,
+                                   word32LE 0,
+                                   word32LE 0]
 
 
 -- luac header for my setup
@@ -266,11 +271,11 @@ luaHeader = [0x1b, 0x4c, 0x75, 0x61] ++ -- Header Signature
             [0x08] ++ -- size of lua_Number (bytes)
             [0x00]    -- integral flag for floating point
 
-finalBuilder :: LuaFunc -> Maybe Builder
+finalBuilder :: LuaFunc -> Either String Builder
 finalBuilder f = (fmap mconcat) . sequence $
-                 [Just $ foldMap word8 luaHeader, -- header
-                  toBS f -- main function 
-                  --Just $ foldMap word32LE [0,0,0] -- 3 optional lists set to 0
+                 [ Right $ foldMap word8 luaHeader, -- header
+                   toBS f -- main function
+                   --Just $ foldMap word32LE [0,0,0] -- 3 optional lists set to 0
                   ] 
 
 -- Write bytestring to file for testing
