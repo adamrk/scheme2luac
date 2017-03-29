@@ -264,7 +264,7 @@ addLambda vars f = do
   let nVars = length vars
   let varStart = n - nVars
   freeVarInxs <- addConstants 
-    (map LuaString . S.toList $ freeVarsEx (Lambda vars f))
+    (map LuaString . S.toList $ freeNonGlobalVars (Lambda vars f))
   varInxs <- addConstants $ map (\(Var s _) -> LuaString s) vars
   funcInxs <- addFunctions [toFuncBody f]
   addInstructions $ [ IABC OpNewTable n 0 0 -- new env

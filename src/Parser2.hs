@@ -198,7 +198,7 @@ data GenExpr a  = Var String a
                 | Lambda [GenExpr ()] (GenBody a)
                   -- ^ first list is variabls, should only be Vars 
                 | Cond (GenExpr a) (GenExpr a) (GenExpr a)
-                | Assign (GenExpr ()) (GenExpr a)
+                | Assign (GenExpr a) (GenExpr a)
                 | DerivedExpr
                 | MacroUse (GenExpr ()) [GenDatum a]
                 | MacroBlock
@@ -393,30 +393,56 @@ definedVars (Def1 (Var s _) _) = S.singleton s
 definedVars (Def2 (Var s _) _ _) = S.singleton s
 definedVars (Def3 ds) = foldMap definedVars ds
 
--- | Which variables appear free in the definition?
+-- | Which variables appear free in the definition? But only those for which `f`
+-- evaluates to True. So we can use the annotation to filter which types of
+-- variables we want.
 --
+freeInAnnDef :: (a -> Bool) -> GenDef a -> S.Set String
+freeInAnnDef f (Def1 _ e) = freeVarsAnnEx f e
+freeInAnnDef f (Def2 _ es b) =
+  freeVarsAnnBody f b `S.difference` foldMap freeVarsEx es
+freeInAnnDef f (Def3 es) = foldMap (freeInAnnDef f) es
+
 freeInDef :: GenDef a -> S.Set String
-freeInDef (Def1 _ e) = freeVarsEx e
-freeInDef (Def2 _ es b) = freeVars b `S.difference` foldMap freeVarsEx es
-freeInDef (Def3 es) = foldMap freeInDef es
+freeInDef = freeInAnnDef (const True)
+
+-- | Free variables in expression, but only those for which `f` evaluates to
+-- True. So we can use the annotation to filter which types of variables
+-- we want.
+--
+freeVarsAnnEx :: (a -> Bool) -> GenExpr a -> S.Set String
+freeVarsAnnEx f (Var s a) = if f a then S.singleton s else S.empty
+freeVarsAnnEx _ (Literal _) = S.empty
+freeVarsAnnEx f (Call a b) =
+  S.union (freeVarsAnnEx f a) (foldMap (freeVarsAnnEx f) b)
+freeVarsAnnEx f (Lambda vars body) = S.difference (freeVarsAnnBody f body)
+                                  (foldMap freeVarsEx vars)
+freeVarsAnnEx f (Cond x y z) = foldMap (freeVarsAnnEx f) [x, y, z]
+freeVarsAnnEx f (Assign a b) = S.union (freeVarsAnnEx f a) (freeVarsAnnEx f b)
 
 -- | Free variables in expression
 --
 freeVarsEx :: GenExpr a -> S.Set String
-freeVarsEx (Var s _) = S.singleton s
-freeVarsEx (Literal _) = S.empty
-freeVarsEx (Call a b) = S.union (freeVarsEx a) (foldMap freeVarsEx b)
-freeVarsEx (Lambda vars body) = S.difference (freeVars body) 
-                                  (foldMap freeVarsEx vars)
-freeVarsEx (Cond x y z) = foldMap freeVarsEx [x, y, z]
-freeVarsEx (Assign a b) = S.union (freeVarsEx a) (freeVarsEx b)
+freeVarsEx = freeVarsAnnEx (const True)
 
--- | Free variables in body
+-- | Free variables in body, But only those for which `f`
+-- evaluates to True. So we can use the annotation to filter which types of
+-- variables we want.
+--
+freeVarsAnnBody :: (a -> Bool) -> GenBody a -> S.Set String
+freeVarsAnnBody f (Body defs exprs) = S.union (foldMap (freeVarsAnnEx f) exprs)
+                                             (foldMap (freeInAnnDef f) defs)
+                                       `S.difference` foldMap definedVars defs
+
+-- | All free variables in a body.
 --
 freeVars :: GenBody a -> S.Set String
-freeVars (Body defs exprs) = S.union (foldMap freeVarsEx exprs)
-                                   (foldMap freeInDef defs)
-                             `S.difference` foldMap definedVars defs
+freeVars = freeVarsAnnBody (const True)
+
+-- | Free vars in the expression that have been annotated as nonglobal
+--
+freeNonGlobalVars :: AnnExpr -> S.Set String
+freeNonGlobalVars = freeVarsAnnEx (== Local)
 
 -- | Annotate each expression by labeling each lambda with the variables in 
 -- needs from the environment.
@@ -434,7 +460,7 @@ annotateEx vars (Lambda es b) = Lambda es (annotateBody newVars b)
      -- ^ add lambda variables to defined vars set
 annotateEx vars (Cond a b c) = 
   Cond (annotateEx vars a) (annotateEx vars b) (annotateEx vars c)
-annotateEx vars (Assign a b) = Assign a (annotateEx vars b)
+annotateEx vars (Assign a b) = Assign (annotateEx vars a) (annotateEx vars b)
 
 annotateBody :: S.Set String -> GenBody a -> AnnBody
 annotateBody vars (Body ds es) = 
