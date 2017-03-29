@@ -1,0 +1,10 @@
+*.h
+*.cpp
+*.luac
+test.scm
+test2.scm
+.stack-work/
+examples.hs
+luac.out
+simplecode.lua
+sample.hs

@@ -192,10 +192,10 @@ data Lit = LitBool Bool
 
 -- | Data type for a Scheme expression. The a contains additional annotations.
 -- 
-data GenExpr a = Var String a
+data GenExpr a = Var String
           | Literal Lit
           | Call (GenExpr a) [GenExpr a]
-          | Lambda [GenExpr ()] (GenBody a) 
+          | Lambda [GenExpr ()] (GenBody a) a 
             -- ^ first list is variabls, should only be Vars   
           | Cond (GenExpr a) (GenExpr a) (GenExpr a)
           | Assign (GenExpr ()) (GenExpr a)
@@ -208,7 +208,7 @@ data GenExpr a = Var String a
 --
 data GenDef a = Def1 (GenExpr ()) (GenExpr a)
               -- ^ first expr should only be a Var (the variable we define)
-            | Def2 (GenExpr ()) [GenExpr ()] (GenBody a)
+            | Def2 (GenExpr ()) [GenExpr ()] (GenBody a) a
             | Def3 [GenDef a]
               deriving (Eq, Show)
 
@@ -231,19 +231,14 @@ data GenCommOrDef a = Comm (GenExpr a)
                     | DefSyn [SyntaxRule]
   deriving (Eq, Show)
 
--- | Map of variable names to scoping. Int = 0 indicates immediate environment and
--- Int > 0 indicates the number of scopes outward.
---
-type VarT = M.Map String Int
-
 type Expr = GenExpr ()
 type Def = GenDef ()
 type Body = GenBody ()
 type CommOrDef = GenCommOrDef ()
-type AnnExpr = GenExpr VarT
-type AnnDef = GenDef VarT 
-type AnnBody = GenBody VarT
-type AnnCommOrDef = GenCommOrDef VarT
+type AnnExpr = GenExpr (S.Set String)
+type AnnDef = GenDef (S.Set String)
+type AnnBody = GenBody (S.Set String)
+type AnnCommOrDef = GenCommOrDef (S.Set String)
 
 parExpr :: Parser Expr
 parExpr = parVar 
@@ -304,14 +299,14 @@ parLambda = do
                 formals <- token parFormals
                 body <- token parBody
                 parRight
-                return $ Lambda formals body
+                return $ Lambda formals body ()
 
 parVar :: Parser Expr
 parVar = try $ do
             x <- parToken
             case x of
               Identifier s -> if not (s `elem` synKeywords) 
-                                then return (Var s ())
+                                then return (Var s)
                                 else empty
               _ -> empty
          <|> unexpected "expected variable"               
@@ -352,7 +347,7 @@ parDef = (<|> unexpected "not a definition" ) $ try $ do
       token parRight
       body <- parBody
       parRight
-      return (Def2 v formals body)))
+      return (Def2 v formals body ())))
   else (if x /= "begin" then empty else 
     do
       defs <- many (token parDef)
@@ -390,24 +385,24 @@ parProgram = many $ try (fmap Comm $ token parExpr)
 -- | Which variables are being defined in this definition?
 --
 definedVars :: GenDef a -> S.Set String
-definedVars (Def1 (Var s _) _) = S.singleton s
-definedVars (Def2 (Var s _) _ _) = S.singleton s
+definedVars (Def1 (Var s) _) = S.singleton s
+definedVars (Def2 (Var s) _ _ _) = S.singleton s
 definedVars (Def3 ds) = foldMap definedVars ds
 
 -- | Which variables appear free in the definition?
 --
 freeInDef :: GenDef a -> S.Set String
 freeInDef (Def1 _ e) = freeVarsEx e
-freeInDef (Def2 _ es b) = freeVars b `S.difference` foldMap freeVarsEx es
+freeInDef (Def2 _ es b _) = freeVars b `S.difference` foldMap freeVarsEx es
 freeInDef (Def3 es) = foldMap freeInDef es
 
 -- | Free variables in expression
 --
 freeVarsEx :: GenExpr a -> S.Set String
-freeVarsEx (Var s _) = S.singleton s
+freeVarsEx (Var s) = S.singleton s
 freeVarsEx (Literal _) = S.empty
 freeVarsEx (Call a b) = S.union (freeVarsEx a) (foldMap freeVarsEx b)
-freeVarsEx (Lambda vars body) = S.difference (freeVars body) 
+freeVarsEx (Lambda vars body _) = S.difference (freeVars body) 
                                   (foldMap freeVarsEx vars)
 freeVarsEx (Cond x y z) = foldMap freeVarsEx [x, y, z]
 freeVarsEx (Assign a b) = S.union (freeVarsEx a) (freeVarsEx b)
@@ -419,60 +414,32 @@ freeVars (Body defs exprs) = S.union (foldMap freeVarsEx exprs)
                                    (foldMap freeInDef defs)
                              `S.difference` foldMap definedVars defs
 
--- | The variables defined at the top level are all put in a map with value
--- 0 to indicate they are defined in the current environment.
---
-topDefined :: [GenCommOrDef a] -> VarT
-topDefined xs = foldr helper (M.fromList []) (map getVars xs)
-  where
-    helper ::S.Set String -> M.Map String Int -> M.Map String Int
-    helper s m = M.union m (M.fromList $ zip (S.toList s) [0,0..])
-    getVars :: GenCommOrDef a -> S.Set String
-    getVars (Comm _) = S.empty
-    getVars (Def d) = definedVars d
-
--- | Given an annotation of variable environments, extend it to an expression
+-- | Annotate each expression by labeling each lambda with the variables in 
+-- needs from the environment.
 -- 
-annotateEx :: VarT -> GenExpr a -> AnnExpr
-annotateEx t (Var s _) = Var s t
-annotateEx _ (Literal x) = Literal x
-annotateEx t (Call f xs) = Call (annotateEx t f) (map (annotateEx t) xs)
-annotateEx t (Lambda es b) = Lambda es (annotateBody newt b)
+annotateEx :: GenExpr a -> AnnExpr
+annotateEx (Var s) = Var s
+annotateEx (Literal x) = Literal x
+annotateEx (Call f xs) = Call (annotateEx f) (map annotateEx xs)
+annotateEx l@(Lambda es b _) = Lambda es (annotateBody b) (freeVarsEx l) 
  -- ^ increase the scope by 1 for each var not in es.
-  where
-    newt = M.unionWith min 
-            ((+1) <$> t) 
-            (M.fromList $ zip (S.toList $ foldMap freeVarsEx es) [0,0..])  
-annotateEx t (Cond a b c) = Cond (annotateEx t a) (annotateEx t b)
-                                                   (annotateEx t c)
-annotateEx t (Assign a b) = Assign a (annotateEx t b)
+annotateEx (Cond a b c) = Cond (annotateEx a) (annotateEx b) (annotateEx c)
+annotateEx (Assign a b) = Assign a (annotateEx b)
 
-annotateBody :: VarT -> GenBody a -> AnnBody
-annotateBody t (Body ds es) = Body (map (annotateDef newt) ds) 
-                                   (map (annotateEx newt) es)
-  where
-    newt = M.unionWith min t
-            (M.fromList $ zip (S.toList $ foldMap definedVars ds) [0,0..])
+annotateBody :: GenBody a -> AnnBody
+annotateBody (Body ds es) = Body (map annotateDef ds) (map annotateEx es)
 
-annotateDef :: VarT -> GenDef a -> AnnDef
-annotateDef t (Def1 a b) = Def1 a (annotateEx t b)
-annotateDef t (Def2 a b c) = Def2 a b (annotateBody newt c)
-  where
-    newt = M.unionWith min 
-             ((+1) <$> t)
-             (M.fromList $ zip (S.toList $ foldMap freeVarsEx b) [0,0..])
-annotateDef t (Def3 ds) = Def3 $ map (annotateDef newt) ds
-  where
-    newt = M.unionWith min t
-            (M.fromList $ zip (S.toList $ foldMap definedVars ds) [0,0..])
+annotateDef :: GenDef a -> AnnDef
+annotateDef (Def1 a b) = Def1 a (annotateEx b)
+annotateDef d@(Def2 a b c _) = Def2 a b (annotateBody c) (freeInDef d)
+annotateDef (Def3 ds) = Def3 $ map annotateDef ds
 
-annotateProgram :: VarT -> [GenCommOrDef a] -> [AnnCommOrDef]
-annotateProgram t xs = map (ann newt) xs
+annotateProgram :: [GenCommOrDef a] -> [AnnCommOrDef]
+annotateProgram xs = map ann xs
   where
-    ann t (Def d) = Def $ annotateDef t d
-    ann t (Comm e) = Comm $ annotateEx t e
-    newt = M.unionWith min t (topDefined xs)
-
+    ann (Comm x) = Comm $ annotateEx x
+    ann (Def x) = Def $ annotateDef x
+    
 allVars :: [GenCommOrDef a] -> S.Set String
 allVars = foldMap getFree
   where

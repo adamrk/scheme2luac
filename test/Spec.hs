@@ -24,9 +24,9 @@ fileExCompare s =
             (_,a,_) <- runIO $ readCreateProcessWithExitCode (shell $ "scheme < " ++ s) ""
             (exitcode, b, _) <- runIO $ do
               f <- compileFromFile s
-              case f >>= finalBuilder of
-                Just bs -> writeBuilder outfile bs
-                Nothing -> print "assembly error"
+              case maybeToEither f >>= finalBuilder of
+                Right bs -> writeBuilder outfile bs
+                Left s -> print $ "assembly error: " ++ s
               readCreateProcessWithExitCode (shell $ "lua " ++ outfile) ""  
             it s $ do
               exitcode `shouldBe` ExitSuccess
@@ -36,9 +36,9 @@ bytecodeParses :: String -> LuaFunc -> SpecWith ()
 bytecodeParses s luafunc = do
   (exitCode, stdOut, stdErr) <- runIO $
     case finalBuilder luafunc of
-      Just bs -> writeBuilder outfile bs >> do 
+      Right bs -> writeBuilder outfile bs >> do 
         readCreateProcessWithExitCode (shell $ "luac -l -l " ++ outfile) "" 
-      Nothing -> return (ExitFailure 101, "AssemblyError", "AssemblyError")
+      Left s -> return (ExitFailure 101, "AssemblyError: " ++ s, "AssemblyError: " ++ s)
   it (s ++ " assembled") $ exitCode `shouldNotBe` (ExitFailure 101)
   it (s ++ " valid bytecode") $ exitCode `shouldBe` ExitSuccess
   where outfile = "test/testfiles/temp.luac" 
