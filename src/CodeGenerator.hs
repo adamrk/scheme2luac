@@ -501,12 +501,35 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     functions    = []})
              , ("force", LuaFunc { startline=0, endline=0, upvals=0,
                                    params=1, vararg=0, maxstack=1,
-                                   source="@primforce\0",
+                                   source="@prim_force\0",
                     instructions = [ IABC OpTailCall 0 1 0
                                    , IABC OpReturn 0 0 0
                                    ],
                     constants    = [],
                     functions    = []})
+             , ("eval", LuaFunc { startline=0, endline=0, upvals=0,
+                                  params=1, vararg=0, maxstack=4,
+                                  source="@prim_eval\0",
+                  instructions  = [ IABx OpGetGlobal 1 0
+                                  , IABx OpLoadK 2 1
+                                  , IABC OpCall 1 2 1
+                                  , IABx OpGetGlobal 1 2
+                                  , IABC OpCall 1 1 1
+                                  , IABx OpGetGlobal 1 3
+                                  , IABx OpGetGlobal 2 4
+                                  , IABC OpMove 3 0 0
+                                  , IABC OpCall 2 2 2
+                                  , IABC OpCall 1 2 1
+                                  , IABC OpReturn 0 1 0
+                                  ],
+                  constants     = [ LuaString "require"
+                                  , LuaString "lualibhelper"
+                                  , LuaString "hs_init"
+                                  , LuaString "dofile"
+                                  , LuaString "compile_in_haskell"
+                                  , LuaString "hs_exit"
+                                  ],
+                  functions     = []})
             ]
 
 
