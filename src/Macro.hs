@@ -177,7 +177,7 @@ applyMacrosProgram ms xs = map (\x ->
 
 defaultMacros :: MacroList
 defaultMacros =
-  [ SyntaxRule {
+  [ SyntaxRule { --convert `let` to a lambda application
       pat =
         PatEllipses
           [ PatternLit "let"
@@ -199,7 +199,7 @@ defaultMacros =
           ]
     }
 
-  , SyntaxRule {
+  , SyntaxRule { -- convert `delay` to a lambda
       pat =
         PatternComp [ PatternLit "delay"
                     , PatternId "a"

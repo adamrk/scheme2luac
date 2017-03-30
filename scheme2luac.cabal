@@ -26,6 +26,7 @@ library
                      , trifecta
                      , QuickCheck
                      , mtl
+                     , hslua
   default-language:    Haskell2010
 
 executable scheme2luac-exe

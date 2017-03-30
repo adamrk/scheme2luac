@@ -8,3 +8,7 @@ examples.hs
 luac.out
 simplecode.lua
 sample.hs
+*.o
+*.so
+*.hi
+*.lua
