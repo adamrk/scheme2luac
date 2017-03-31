@@ -144,6 +144,7 @@ addExpr (Literal (LitBool b)) =
   where
     val = if b then 1 else 0
 
+
 addExpr (Literal cs) = 
   do
     n <- getNext
@@ -530,6 +531,35 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                   , LuaString "hs_exit"
                                   ],
                   functions     = []})
+             , ("cons", LuaFunc{ startline=0, endline=0, upvals=0,
+                                 params=2, vararg=0, maxstack=3,
+                                 source="@prim_cons\0",
+                  instructions = [ IABC OpNewTable 2 2 0
+                                 , IABC OpSetTable 2 256 0
+                                 , IABC OpSetTable 2 257 1
+                                 , IABC OpReturn 2 2 0
+                                 ],
+                  constants    = [ LuaNumber 0
+                                 , LuaNumber 1
+                                 ],
+                  functions    = []})
+             , ("car", LuaFunc { startline=0, endline=0, upvals=0,
+                                 params=1, vararg=0, maxstack=1,
+                                 source="@prim_car\0",
+                  instructions = [ IABC OpGetTable 0 0 256
+                                 , IABC OpReturn 0 2 0 
+                                 ],
+                  constants    = [ LuaNumber 0 ],
+                  functions    = []})
+             , ("cdr", LuaFunc { startline=0, endline=0, upvals=0,
+                                 params=1, vararg=0, maxstack=1,
+                                 source="@prim_cdr\0",
+                  instructions = [ IABC OpGetTable 0 0 256
+                                 , IABC OpReturn 0 2 0
+                                 ],
+                  constants    = [ LuaNumber 1 ],
+                  functions    = []
+                                 })
             ]
 
 
