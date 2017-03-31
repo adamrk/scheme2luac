@@ -1,3 +1,5 @@
+{-# LANGUAGE ExistentialQuantification #-}
+
 module Parser2 where
 
 import Text.Trifecta
@@ -188,6 +190,7 @@ data Lit = LitBool Bool
          | LitNum Double
          | LitChar Char
          | LitStr String
+         | LitQuote (GenDatum ())
           deriving (Eq, Show)
 
 -- | Data type for a Scheme expression. The a contains additional annotations.
@@ -252,6 +255,26 @@ parExpr = parVar
         <|> try parCond
         <|> parAssign 
 
+parDatum :: Parser (GenDatum ())
+parDatum = try parSimpleDatum <|> (do
+  token parLeft
+  xs <- many $ token parDatum
+  parRight
+  return $ CompoundDatum xs)
+
+parSimpleDatum :: Parser (GenDatum ())
+parSimpleDatum = do
+  x <- parToken
+  case x of
+    LeftPar -> unexpected "( is not simple Datum)"
+    RightPar -> unexpected ") is not simple datum"
+    Other _ -> unexpected "Other is not simple datum"
+    Boolean' b -> return $ SimpleDatum (Literal $ LitBool b)
+    Number' n -> return $ SimpleDatum (Literal $ LitNum n)
+    Character c -> return $ SimpleDatum (Literal $ LitChar c)
+    String s -> return $ SimpleDatum (Literal $ LitStr s)
+    Identifier s -> return $ SimpleDatum (Var s ())
+
 -- | Parse a literal without wrapping, so it can be used for patterns,
 -- templates, or expressions.
 --
@@ -259,6 +282,16 @@ parLitRaw :: Parser Lit
 parLitRaw = try (do
               x <- parToken
               if lit x then return (conv x) else empty)
+            <|> try (do
+              token parLeft
+              x <- token parIdent
+              if x == "quote"
+                then LitQuote <$> token parDatum <* parRight
+                else unexpected "Not a quote")
+            <|> try (do
+              token $ char '\''
+              LitQuote <$> parDatum
+              )
             <|> unexpected "Not a literal"
          where
             lit (Boolean' _) = True
