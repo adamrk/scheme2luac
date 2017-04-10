@@ -587,7 +587,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     constants    = [],
                     functions    = []})
              , ("eval", LuaFunc { startline=0, endline=0, upvals=0,
-                                  params=1, vararg=0, maxstack=4,
+                                  params=1, vararg=0, maxstack=5,
                                   source="@prim_eval\0",
                   instructions  = [ IABx OpGetGlobal 1 0
                                   , IABx OpLoadK 2 1
@@ -596,16 +596,21 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                   , IABC OpCall 1 1 1
                                   , IABx OpGetGlobal 1 3
                                   , IABx OpGetGlobal 2 4
-                                  , IABC OpMove 3 0 0
+                                  , IABx OpGetGlobal 3 5
+                                  , IABC OpMove 4 0 0
+                                  , IABC OpCall 3 2 2
                                   , IABC OpCall 2 2 2
                                   , IABC OpCall 1 2 1
-                                  , IABC OpReturn 0 1 0
+                                  , IABx OpGetGlobal 2 6
+                                  , IABC OpCall 2 1 1 
+                                  , IABC OpReturn 1 2 0
                                   ],
                   constants     = [ LuaString "require"
                                   , LuaString "lualibhelper"
                                   , LuaString "hs_init"
                                   , LuaString "dofile"
                                   , LuaString "compile_in_haskell"
+                                  , LuaString "serialize"
                                   , LuaString "hs_exit"
                                   ],
                   functions     = []})
@@ -707,6 +712,24 @@ serialize_funcs =
                                  , LuaString "#f"
                                  ],
                   functions =    []})
+             -- | TODO: change this from just the %f format so that we can
+             -- actually properly pass numbers
+             --
+             , ("ser_num", LuaFunc { startline=0, endline=0, upvals=0,
+                                     params=1, vararg=0, maxstack=4,
+                                     source="@ser_num\0",
+                  instructions = [ IABx OpGetGlobal 1 0
+                                 , IABC OpGetTable 1 1 257
+                                 , IABx OpLoadK 2 2
+                                 , IABC OpMove 3 0 0
+                                 , IABC OpCall 1 3 2
+                                 , IABC OpReturn 1 2 0
+                                 ],
+                  constants    = [ LuaString "string"
+                                 , LuaString "format"
+                                 , LuaString "%f"
+                                 ],
+                  functions    = []})
              , ("ser_quote", LuaFunc { startline=0, endline=0, upvals=0,
                                        params=1, vararg=0, maxstack=11,
                                        source="@ser_quote\0",

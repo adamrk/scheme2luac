@@ -42,8 +42,24 @@ parIdent = (:) <$> parInit <*> many parSubseq <|> string "+" <|> string "-"
 parBool :: Parser String
 parBool = string "#t" <|> string "#f"
 
-parNum :: Parser String
-parNum = some digit
+parNum :: Parser Double
+parNum = do
+  sign <- option "" $ string "-"
+  integral <- many digit
+  option "" $ string "."
+  decimal <- many digit
+  let figures = length decimal
+      result = digits2Double integral + (digits2Double decimal / (10 ^ figures))
+  case (length integral, length decimal, sign) of
+    (0,0,_) -> unexpected "number has no digits"
+    (_,_,"") -> return result
+    (_,_,"-") -> return (- result)
+
+digits2Double :: String -> Double
+digits2Double =
+  let help n [] = n
+      help n (x:xs) = help (n * 10 + read [x]) xs
+  in  help 0
 
 parChar :: Parser String
 parChar = (++) <$> string "#\\" <*> ( string "space"
@@ -72,7 +88,7 @@ parToken =   fmap Identifier parIdent
           where
             boolConv "#f" = Boolean' False
             boolConv "#t" = Boolean' True
-            numConv = Number' . read
+            numConv = Number'
             charConv "space" = Character ' '
             charConv "newline" = Character '\n'
             charConv (['#', '\\', x]) = Character x
