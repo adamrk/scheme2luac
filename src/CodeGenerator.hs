@@ -239,6 +239,7 @@ addExpr (Call f xs) =
     n <- getNext
     let nvars = length xs
     addExpr f
+--    addInstructions [ IABC OpGetUpVal 0 0 0 ]
     foldMap addExpr xs
     addInstructions [ IABC OpCall n (nvars + 1) 2 ]
     setNext (n + 1)
@@ -280,9 +281,9 @@ completeFunc s f = LuaFunc { startline=0, endline=0, upvals=1, params=0,
                               map maxReg (inst f)
                            }
 
-completeFuncWithParam :: Word8 -> String -> PartialLuaFunc -> LuaFunc
-completeFuncWithParam n s f =
-                 LuaFunc { startline=0, endline=0, upvals=1, params=n,
+completeFuncParamUpval :: Word8 -> Word8 -> String -> PartialLuaFunc -> LuaFunc
+completeFuncParamUpval p u s f =
+                 LuaFunc { startline=0, endline=0, upvals=u, params=p,
                            vararg=0, source=s, instructions=inst f,
                            constants=cnst f, functions=funcs f,
                            maxstack= fromIntegral . (+1) . maximum $ 
@@ -361,7 +362,7 @@ addLambda vars f = do
 
 toFuncLambda :: [Expr] -> AnnBody -> LuaFunc
 toFuncLambda vars f =
-  completeFuncWithParam (fromIntegral $ length vars) "@lambdabody\0" $
+  completeFuncParamUpval (fromIntegral $ length vars) 1 "@lambdabody\0" $
     execState (do
       let n = length vars
       setNext n
@@ -423,8 +424,9 @@ addProgram xs = do
   where
     axs = annotateProgram xs -- annotate the parse tree
     freeVars = allVars xs -- search for free variables
-    globals = filter ((`S.member` freeVars) . fst) primitives -- add primitives
-        ++ serialize_funcs
+    prims = filter ((`S.member` freeVars) . fst) primitives -- add primitives
+    serialized = if "eval" `S.member` freeVars then serialize_funcs else []
+    globals = serialized ++ prims
     tofunc (Comm x) = toFunc x
     tofunc (Def x) = toFuncDef x
 
@@ -441,6 +443,23 @@ toFuncProgram xs = completeFunc "@main\0" $ execState (do
 
 preProcess :: [CommOrDef] -> [CommOrDef]
 preProcess = applyMacrosProgram defaultMacros 
+
+toFuncWithoutEnv :: [CommOrDef] -> LuaFunc
+toFuncWithoutEnv xs = completeFuncParamUpval 1 0 "@in_eval\0" $ execState (do
+  setNext 1
+  addProgram $ preProcess xs
+  addInstructions [ IABC OpReturn 1 2 0 ]
+  ) emptyPartialFunc
+
+evalWrapper :: [CommOrDef] -> LuaFunc
+evalWrapper xs = completeTopLevel $ execState (do
+  inxs <- addFunctions [toFuncWithoutEnv xs]
+  cinxs <- addConstants [LuaString "func_from_haskell"]
+  addInstructions [ IABx OpClosure 0 (head inxs)
+                  , IABx OpSetGlobal 0 (head cinxs)
+                  , IABC OpReturn 0 1 0
+                  ]
+  ) emptyPartialFunc
 
 ------------------- Functions to load at beginning ------------------------
 
@@ -589,21 +608,24 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
              , ("eval", LuaFunc { startline=0, endline=0, upvals=0,
                                   params=1, vararg=0, maxstack=5,
                                   source="@prim_eval\0",
-                  instructions  = [ IABx OpGetGlobal 1 0
-                                  , IABx OpLoadK 2 1
-                                  , IABC OpCall 1 2 1
-                                  , IABx OpGetGlobal 1 2
-                                  , IABC OpCall 1 1 1
-                                  , IABx OpGetGlobal 1 3
-                                  , IABx OpGetGlobal 2 4
-                                  , IABx OpGetGlobal 3 5
-                                  , IABC OpMove 4 0 0
-                                  , IABC OpCall 3 2 2
-                                  , IABC OpCall 2 2 2
-                                  , IABC OpCall 1 2 1
-                                  , IABx OpGetGlobal 2 6
-                                  , IABC OpCall 2 1 1 
-                                  , IABC OpReturn 1 2 0
+                  instructions  = [ IABx OpGetGlobal 1 0 -- 'require'
+                                  , IABx OpLoadK 2 1 -- 'lualibhelper'
+                                  , IABC OpCall 1 2 1 -- req lualib
+                                  , IABx OpGetGlobal 1 2 -- 'hs_init'
+                                  , IABC OpCall 1 1 1 -- call hs_init
+                                  , IABx OpGetGlobal 1 3 -- 'dofile'
+                                  , IABx OpGetGlobal 2 4 -- 'compile_in_haskell'
+                                  , IABx OpGetGlobal 3 5 -- 'serialize'
+                                  , IABC OpMove 4 0 0 -- param -> reg 4
+                                  , IABC OpCall 3 2 2 -- call serialize
+                                  , IABC OpCall 2 2 2 -- call compile_in_haskell
+                                  , IABC OpCall 1 2 1 -- call dofile
+                                  , IABx OpGetGlobal 2 6 -- 'hs_exit'
+                                  , IABC OpCall 2 1 1 -- call hs_exit
+                                  , IABx OpGetGlobal 0 7 -- 'func_from_haskell'
+                                  --, IABC OpGetUpVal 0 0 0 -- pass in env
+                                  , IABC OpTailCall 0 1 0
+                                  , IABC OpReturn 0 0 0
                                   ],
                   constants     = [ LuaString "require"
                                   , LuaString "lualibhelper"
@@ -612,6 +634,7 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                   , LuaString "compile_in_haskell"
                                   , LuaString "serialize"
                                   , LuaString "hs_exit"
+                                  , LuaString "func_from_haskell"
                                   ],
                   functions     = []})
              , ("cons", LuaFunc{ startline=0, endline=0, upvals=0,

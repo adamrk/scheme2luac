@@ -24,7 +24,7 @@ compile l = do
   str :: BS.ByteString <- fromJust `fmap` peek l 1
   print str
   let tree = parseByteString parProgram mempty str
-  let luafunc = fmap toFuncProgram tree
+  let luafunc = fmap evalWrapper tree
   case luafunc of
     Success x -> writeLuaFunc "/tmp/scheme2luac.luac" (Just x)
     Failure _ -> return ()
