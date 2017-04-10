@@ -286,11 +286,24 @@ parLitRaw = try (do
               token parLeft
               x <- token parIdent
               if x == "quote"
-                then LitQuote <$> token parDatum <* parRight
+                then (do
+                  x <- token parDatum <* parRight
+                  case x of
+                    SimpleDatum (Literal (LitBool b)) -> return $ LitBool b
+                    SimpleDatum (Literal (LitNum n)) -> return $ LitNum n
+                    SimpleDatum (Literal (LitChar c)) -> return $ LitChar c
+                    SimpleDatum (Literal (LitStr s)) -> return $ LitStr s
+                    x -> return $ LitQuote x)
                 else unexpected "Not a quote")
             <|> try (do
               token $ char '\''
-              LitQuote <$> parDatum
+              x <- token parDatum
+              case x of
+                SimpleDatum (Literal (LitBool b)) -> return $ LitBool b
+                SimpleDatum (Literal (LitNum n)) -> return $ LitNum n
+                SimpleDatum (Literal (LitChar c)) -> return $ LitChar c
+                SimpleDatum (Literal (LitStr s)) -> return $ LitStr s
+                x -> return $ LitQuote x
               )
             <|> unexpected "Not a literal"
          where

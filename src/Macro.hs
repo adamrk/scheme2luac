@@ -10,6 +10,8 @@ import Control.Applicative (liftA2)
 --
 convMacro :: GenExpr () -> GenDatum ()
 convMacro (Var s ()) = SimpleDatum (Var s ())
+convMacro (Literal (LitQuote x)) =
+  CompoundDatum $ (SimpleDatum $ Var "quote" ()) : [x]
 convMacro (Literal x) = SimpleDatum (Literal x)
 convMacro (Call x xs) = CompoundDatum $ convMacro x : map convMacro xs
 convMacro (Lambda vs b) = 
@@ -130,6 +132,8 @@ convDatum (CompoundDatum ( SimpleDatum (Var "set!" ())
                          : SimpleDatum (Var x ()) 
                          : [y])) = 
   Assign (Var x ()) (convDatum y)
+convDatum (CompoundDatum (SimpleDatum (Var "quote" ()) : [x])) =
+  Literal $ LitQuote x
 convDatum (CompoundDatum (x: xs)) =
   Call (convDatum x) (map convDatum xs)
 

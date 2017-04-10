@@ -144,8 +144,85 @@ addExpr (Literal (LitBool b)) =
   where
     val = if b then 1 else 0
 
+addExpr (Literal (LitQuote (SimpleDatum (Literal x)))) = addExpr (Literal x)
 
-addExpr (Literal cs) = 
+  -- do
+  -- n <- getNext
+  -- inx <- addConstants [ LuaNumber 0
+  --                     , LuaString "quote"
+  --                     , LuaString "literal"
+  --                     , LuaString "type"
+  --                     , LuaString t
+  --                     ]
+  -- incNext
+  -- addExpr (Literal x)
+  -- addInstructions [ IABC OpNewTable n 1 2
+  --                 , IABC OpSetTable n (256 + inx !! 0) (n+1)
+  --                 , IABC OpLoadBool (n+1) 1 0
+  --                 , IABC OpSetTable n (256 + inx !! 1) (n+1)
+  --                 , IABC OpSetTable n (256 + inx !! 2) (n+1)
+  --                 , IABC OpSetTable n (256 + inx !! 3) (256 + inx !! 4)
+  --                 ]
+  -- setNext $ n + 1
+  -- where
+  --   t = case x of
+  --     LitBool _ -> "bool"
+  --     LitChar _ -> "char"
+  --     LitNum _  -> "num"
+  --     LitStr _  -> "str"
+
+
+addExpr (Literal (LitQuote (SimpleDatum (Var s ())))) = do
+  n <- getNext
+  inx <- addConstants [ LuaNumber 0
+                      , LuaString s
+                      , LuaString "quote"
+                      , LuaString "list"
+                      ]
+  addInstructions [ IABC OpNewTable n 1 2 -- table for quote
+                  , IABC OpSetTable n (256 + inx !! 0) (256 + inx !! 1)
+                    -- ^ set var in 0 in table
+                  , IABC OpLoadBool (n+1) 1 0 -- load true reg n+1
+                  , IABC OpSetTable n (256 + inx !! 2) (n+1) -- set quote to T
+                  , IABC OpLoadBool (n+1) 0 0 -- load false
+                  , IABC OpSetTable n (256 + inx !! 3) (n+1) -- set list to F
+                  ]
+  incNext
+
+addExpr (Literal (LitQuote (CompoundDatum []))) = do
+  n <- getNext
+  inx <- addConstants [ LuaString "quote"
+                      , LuaString "list"
+                      ]
+  addInstructions [ IABC OpNewTable n 0 2
+                  , IABC OpLoadBool (n+1) 1 0 -- load true reg n+1
+                  , IABC OpSetTable n (256 + head inx) (n+1) -- 'quote' = T
+                  , IABC OpSetTable n (256 + inx !! 1) (n+1) -- 'list' = T
+                  ]
+  incNext
+
+addExpr (Literal (LitQuote (CompoundDatum (y:ys)))) = do
+  let x = Literal . LitQuote $ y
+  let rest = Literal . LitQuote . CompoundDatum $ ys
+  n <- getNext
+  inx <- addConstants [ LuaNumber 0
+                      , LuaNumber 1
+                      , LuaString "quote"
+                      , LuaString "list" 
+                      ]
+  addInstructions [ IABC OpNewTable n 2 2 ]
+  incNext
+  addExpr x
+  addExpr rest
+  addInstructions [ IABC OpSetTable n (256 + inx !! 0) (n+1) -- 0 to car
+                  , IABC OpSetTable n (256 + inx !! 1) (n+2) -- 1 to cdr
+                  , IABC OpLoadBool (n+1) 1 0 -- load T
+                  , IABC OpSetTable n (256 + inx !! 2) (n+1) -- 'quote'=T
+                  , IABC OpSetTable n (256 + inx !! 3) (n+1) -- 'list'=T
+                  ]
+  setNext $ n+1
+
+addExpr (Literal cs) =
   do
     n <- getNext
     inx <- addConstants [val]
@@ -156,8 +233,8 @@ addExpr (Literal cs) =
       LitChar c -> LuaString [c]
       LitStr s -> LuaString s
       LitNum m -> LuaNumber m
-  
-addExpr (Call f xs) = 
+
+addExpr (Call f xs) =
   do
     n <- getNext
     let nvars = length xs
@@ -347,6 +424,7 @@ addProgram xs = do
     axs = annotateProgram xs -- annotate the parse tree
     freeVars = allVars xs -- search for free variables
     globals = filter ((`S.member` freeVars) . fst) primitives -- add primitives
+        ++ serialize_funcs
     tofunc (Comm x) = toFunc x
     tofunc (Def x) = toFuncDef x
 
@@ -558,8 +636,145 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                                  , IABC OpReturn 0 2 0
                                  ],
                   constants    = [ LuaNumber 1 ],
-                  functions    = []
-                                 })
+                  functions    = []})
+             ]
+
+serialize_funcs = 
+             [ ("serialize", LuaFunc { startline=0, endline=0, upvals=0,
+                                       params=1, vararg=0, maxstack=3,
+                                       source="@serialize\0",
+                  instructions = [ IABx  OpGetGlobal 1 0 -- 'type'
+                                 , IAsBx OpJmp 0 0
+                                 , IABC  OpMove 2 0 0 -- param to reg 2
+                                 , IABC  OpCall 1 2 2 -- call type on param
+                                 , IABx  OpLoadK 2 9 -- 'nil'
+                                 , IABC  OpEq  0 1 2 -- if type is nil pc++
+                                 , IAsBx OpJmp 0 2 -- to next loadk
+                                 , IABx  OpLoadK 1 10 -- load empty string
+                                 , IAsBx OpJmp 0 22 -- to return
+                                 , IABx  OpLoadK 2 1 -- 'string'
+                                 , IABC  OpEq 0 1 2 -- if type is string pc++
+                                 , IAsBx OpJmp 0 2 -- to next loadk
+                                 , IABx  OpGetGlobal 1 5 -- get ser_str
+                                 , IAsBx OpJmp 0 15 -- jump to last move
+                                 , IABx  OpLoadK 2 2 -- 'boolean'
+                                 , IABC  OpEq 0 1 2 -- if type is bool pc++
+                                 , IAsBx OpJmp 0 2 -- jump to next load
+                                 , IABx  OpGetGlobal 1 6 -- get ser_bool
+                                 , IAsBx OpJmp 0 10 -- to last move
+                                 , IABx  OpLoadK 2 3 -- 'number'
+                                 , IABC  OpEq 0 1 2 -- if type is num pc++
+                                 , IAsBx OpJmp 0 2 -- to next load
+                                 , IABx  OpGetGlobal 1 7 -- get ser_num
+                                 , IAsBx OpJmp 0 5 -- to last move
+                                 , IABx  OpLoadK 2 4 -- 'table'
+                                 , IABC  OpEq 0 1 2 -- if type is table pc++
+                                 , IAsBx OpJmp 0 2 -- to move
+                                 , IABx  OpGetGlobal 1 8 --get ser_quote
+                                 , IAsBx OpJmp 0 0
+                                 , IABC  OpMove 2 0 0 -- param to 2
+                                 , IABC  OpTailCall 1 0 0 -- call ser_ on param
+                                 , IABC  OpReturn 1 0 0 
+                                 ],
+                  constants    = [ LuaString "type"
+                                 , LuaString "string"
+                                 , LuaString "boolean"
+                                 , LuaString "number"
+                                 , LuaString "table"
+                                 , LuaString "ser_str"
+                                 , LuaString "ser_bool"
+                                 , LuaString "ser_num"
+                                 , LuaString "ser_quote"
+                                 , LuaString "nil"
+                                 , LuaString ""
+                                 ],
+                  functions    = []})
+             , ("ser_bool", LuaFunc { startline=0, endline=0, upvals=0,
+                                      params=1, vararg=0, maxstack=2,
+                                      source="@ser_bool\0",
+                  instructions = [ IABC  OpLoadBool 1 1 0 -- load T
+                                 , IABC  OpEq 0 0 1 -- if param is T pc++
+                                 , IAsBx OpJmp 0 2 -- to next loadbool
+                                 , IABx  OpLoadK 0 0 -- '#t'
+                                 , IAsBx OpJmp 0 4 -- to return
+                                 , IABC  OpLoadBool 1 0 0 -- load F
+                                 , IABC  OpEq 0 0 1 -- if param is F pc++
+                                 , IAsBx OpJmp 0 1 -- to return
+                                 , IABx  OpLoadK 0 1 -- '#f'
+                                 , IABC  OpReturn 0 2 0 -- return reg 0
+                                 ],
+                  constants =    [ LuaString "#t"
+                                 , LuaString "#f"
+                                 ],
+                  functions =    []})
+             , ("ser_quote", LuaFunc { startline=0, endline=0, upvals=0,
+                                       params=1, vararg=0, maxstack=11,
+                                       source="@ser_quote\0",
+                  instructions = [ IABC  OpGetTable 1 0 256 -- get 'list'
+                                 , IABC  OpLoadBool 2 1 0 -- load true
+                                 , IABC  OpEq 0 1 2 -- if list=T then pc++
+                                 , IAsBx OpJmp 0 15 -- not list -> last get tab
+                                 , IABx  OpLoadK 1 4 -- '(' to acc (reg 1)
+                                 , IABx  OpClosure 4 0 -- loop closure
+                                 , IAsBx OpJmp 0 0 -- noop
+                                 , IABC  OpMove 6 0 0
+                                  -- ^ move param to cdr spot (reg 5)
+                                 , IAsBx OpJmp 0 3 -- to tforloop
+                                 , IABC  OpMove 3 8 0 -- move str to 3
+                                 , IABx  OpLoadK 2 6 -- space -> reg 2
+                                 , IABC  OpConcat 1 1 3 -- concat acc with str
+                                 , IABC  OpTForLoop 4 0 2 -- call closure
+                                 , IAsBx OpJmp 0 (-5) -- if not nil go back
+                                 , IABx  OpLoadK 2 6 -- space -> reg 2
+                                 , IABC  OpMove 3 8 0 -- move last str
+                                 , IABx  OpLoadK 4 5 -- load ')'
+                                 , IABC  OpConcat 1 1 4 -- concat acc, str, ')'
+                                 , IAsBx OpJmp 0 1 -- to return
+                                 , IABC  OpGetTable 1 0 257 -- get index 0
+                                 , IABC  OpReturn 1 2 0
+                                 ],
+                  constants    = [ LuaString "list"
+                                 , LuaNumber 0
+                                 , LuaNumber 1
+                                 , LuaString "ser_quote"
+                                 , LuaString "("
+                                 , LuaString ")"
+                                 , LuaString " "
+                                 ],
+                  functions    = [ LuaFunc { startline=0, endline=0, upvals=0,
+                                             params=2, vararg=0, maxstack=4,
+                                             source="@ser_quote_loop\0",
+                    instructions = [ IABx OpGetGlobal 2 0 -- 'serialize'
+                                   , IABC OpGetTable 3 1 257 -- car
+                                   , IABC OpCall 2 2 2 -- serialize car
+                                   , IABC OpGetTable 1 1 258 -- cdr
+                                   , IABC OpReturn 1 3 0 -- return cdr, str
+                                   ],
+                    constants    = [ LuaString "serialize"
+                                   , LuaNumber 0
+                                   , LuaNumber 1
+                                   ],
+                    functions    = []}]})
+             -- , ("serialize_literal",
+             --      LuaFunc { startline=0, endline=0, upvals=0,
+             --                params=1, vararg=0, maxstack=1,
+             --                source="@prim_serialize_lit\0",
+             --      instructions = [ IABC OpGetTable 1 0 256 
+             --                     , ]
+             --      constants    = [ LuaString "type"
+             --                     , LuaString "bool"
+             --                     , LuaString "num"
+             --                     , LuaString ""]} 
+             -- , ("serialize_quote", LuaFunc { startline=0, endline=0, upvals=0,
+             --                                  params=1, vararg=0, maxstack=???,
+             --                                  source="@prim_serialize\0",
+             --      instructions = [ IABC OpGetTable 1 0 257
+             --                     , IABC OpLoadBool 2 1 0
+             --                     , IABC OpEq ? 1 2
+             --                     , ]
+             --      constants = [ LuaNumber 0
+             --                  , LuaString "list"
+             --                  ]}
             ]
 
 
