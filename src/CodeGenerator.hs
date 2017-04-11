@@ -146,32 +146,6 @@ addExpr (Literal (LitBool b)) =
 
 addExpr (Literal (LitQuote (SimpleDatum (Literal x)))) = addExpr (Literal x)
 
-  -- do
-  -- n <- getNext
-  -- inx <- addConstants [ LuaNumber 0
-  --                     , LuaString "quote"
-  --                     , LuaString "literal"
-  --                     , LuaString "type"
-  --                     , LuaString t
-  --                     ]
-  -- incNext
-  -- addExpr (Literal x)
-  -- addInstructions [ IABC OpNewTable n 1 2
-  --                 , IABC OpSetTable n (256 + inx !! 0) (n+1)
-  --                 , IABC OpLoadBool (n+1) 1 0
-  --                 , IABC OpSetTable n (256 + inx !! 1) (n+1)
-  --                 , IABC OpSetTable n (256 + inx !! 2) (n+1)
-  --                 , IABC OpSetTable n (256 + inx !! 3) (256 + inx !! 4)
-  --                 ]
-  -- setNext $ n + 1
-  -- where
-  --   t = case x of
-  --     LitBool _ -> "bool"
-  --     LitChar _ -> "char"
-  --     LitNum _  -> "num"
-  --     LitStr _  -> "str"
-
-
 addExpr (Literal (LitQuote (SimpleDatum (Var s ())))) = do
   n <- getNext
   inx <- addConstants [ LuaNumber 0
@@ -234,12 +208,26 @@ addExpr (Literal cs) =
       LitStr s -> LuaString s
       LitNum m -> LuaNumber m
 
+addExpr (Call (Var "eval" Global) xs) =
+  do
+    n <- getNext
+    addExpr (Var "eval" Global)
+    addInstructions [ IAsBx OpJmp 0 0
+                    , IABC  OpGetUpVal (n+1) 0 0 -- env in reg n+1
+                    ]
+    incNext
+    addExpr (head xs) -- param in reg n+2
+    addInstructions [ IABC OpCall n 3 3 -- call on env and param
+                    , IABC OpSetUpVal n 0 0 -- set upval to returned env
+                    , IABC OpMove n (n+1) 0 -- move result to n
+                    ]
+    setNext (n+1)
+
 addExpr (Call f xs) =
   do
     n <- getNext
     let nvars = length xs
     addExpr f
---    addInstructions [ IABC OpGetUpVal 0 0 0 ]
     foldMap addExpr xs
     addInstructions [ IABC OpCall n (nvars + 1) 2 ]
     setNext (n + 1)
@@ -448,7 +436,7 @@ toFuncWithoutEnv :: [CommOrDef] -> LuaFunc
 toFuncWithoutEnv xs = completeFuncParamUpval 1 0 "@in_eval\0" $ execState (do
   setNext 1
   addProgram $ preProcess xs
-  addInstructions [ IABC OpReturn 1 2 0 ]
+  addInstructions [ IABC OpReturn 0 3 0 ] -- return env and result
   ) emptyPartialFunc
 
 evalWrapper :: [CommOrDef] -> LuaFunc
@@ -606,26 +594,27 @@ primitives = [ ("*", LuaFunc {startline=0, endline=0, upvals=0, params=0,
                     constants    = [],
                     functions    = []})
              , ("eval", LuaFunc { startline=0, endline=0, upvals=0,
-                                  params=1, vararg=0, maxstack=5,
+                                  params=2, vararg=0, maxstack=6,
                                   source="@prim_eval\0",
-                  instructions  = [ IABx OpGetGlobal 1 0 -- 'require'
-                                  , IABx OpLoadK 2 1 -- 'lualibhelper'
-                                  , IABC OpCall 1 2 1 -- req lualib
-                                  , IABx OpGetGlobal 1 2 -- 'hs_init'
-                                  , IABC OpCall 1 1 1 -- call hs_init
-                                  , IABx OpGetGlobal 1 3 -- 'dofile'
-                                  , IABx OpGetGlobal 2 4 -- 'compile_in_haskell'
-                                  , IABx OpGetGlobal 3 5 -- 'serialize'
-                                  , IABC OpMove 4 0 0 -- param -> reg 4
-                                  , IABC OpCall 3 2 2 -- call serialize
-                                  , IABC OpCall 2 2 2 -- call compile_in_haskell
-                                  , IABC OpCall 1 2 1 -- call dofile
-                                  , IABx OpGetGlobal 2 6 -- 'hs_exit'
-                                  , IABC OpCall 2 1 1 -- call hs_exit
-                                  , IABx OpGetGlobal 0 7 -- 'func_from_haskell'
-                                  --, IABC OpGetUpVal 0 0 0 -- pass in env
-                                  , IABC OpTailCall 0 1 0
-                                  , IABC OpReturn 0 0 0
+                  instructions  = [ IABx OpGetGlobal 2 0 -- 'require'
+                                  , IABx OpLoadK 3 1 -- 'lualibhelper'
+                                  , IABC OpCall 2 2 1 -- req lualib
+                                  , IABx OpGetGlobal 2 2 -- 'hs_init'
+                                  , IABC OpCall 2 1 1 -- call hs_init
+                                  , IABx OpGetGlobal 2 3 -- 'dofile'
+                                  , IABx OpGetGlobal 3 4 -- 'compile_in_haskell'
+                                  , IABx OpGetGlobal 4 5 -- 'serialize'
+                                  , IABC OpMove 5 1 0 -- param1 -> reg 5
+                                  , IABC OpCall 4 2 2 -- call serialize
+                                  , IABC OpCall 3 2 2 -- call compile_in_haskell
+                                  , IABC OpCall 2 2 1 -- call dofile
+                                  , IABx OpGetGlobal 1 6 -- 'hs_exit'
+                                  , IABC OpCall 1 1 1 -- call hs_exit
+                                  , IABx OpGetGlobal 1 7 -- 'func_from_haskell'
+                                  , IAsBx OpJmp 0 0
+                                  , IABC OpMove 2 0 0 -- env -> reg 2
+                                  , IABC OpTailCall 1 2 0 -- call with env
+                                  , IABC OpReturn 1 0 0
                                   ],
                   constants     = [ LuaString "require"
                                   , LuaString "lualibhelper"
