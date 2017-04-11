@@ -20,9 +20,9 @@ filename = "/tmp/scheme2luac.luac"
 
 compile :: LuaState -> IO CInt
 compile l = do
-  putStrLn "compiling"
+--  putStrLn "compiling" -- for debugging
   str :: BS.ByteString <- fromJust `fmap` peek l 1
-  print str
+--  print str -- for debugging
   let tree = parseByteString parProgram mempty str
   let luafunc = fmap evalWrapper tree
   case luafunc of

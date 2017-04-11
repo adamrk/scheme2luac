@@ -504,7 +504,7 @@ freeVars = freeVarsAnnBody (const True)
 -- | Free vars in the expression that have been annotated as nonglobal
 --
 freeNonGlobalVars :: AnnExpr -> S.Set String
-freeNonGlobalVars = freeVarsAnnEx (== Local)
+freeNonGlobalVars = freeVarsAnnEx (const True)
 
 -- | Annotate each expression by labeling each lambda with the variables in 
 -- needs from the environment.

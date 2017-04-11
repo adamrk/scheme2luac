@@ -127,13 +127,9 @@ addExpr (Var s label) = do
   inxs <- addConstants [ LuaString s ]
   let i = head inxs
   n <- getNext
-  case label of
-    Local ->
-      addInstructions [ IABC  OpGetUpVal n 0 0 -- env table
-                      , IABC  OpGetTable n n (256 + i) -- get s from env
-                      ]
-    Global -> 
-      addInstructions [ IABx  OpGetGlobal n i ]
+  addInstructions [ IABC  OpGetUpVal n 0 0 -- env table
+                  , IABC  OpGetTable n n (256 + i) -- get s from env
+                  ]
   incNext
 
 addExpr (Literal (LitBool b)) =
@@ -399,14 +395,20 @@ addDef (Def3 ds) = foldMap addDef ds
 addProgram :: [CommOrDef] -> State PartialLuaFunc ()
 addProgram xs = do
   finxs <- addFunctions $ map tofunc axs
-  ginxs <- addFunctions $ map snd globals
-  cinxs <- addConstants $ map (LuaString . fst) globals
+  ginxs <- addFunctions $ map snd prims
+  cinxs <- addConstants $ map (LuaString . fst) prims
   n <- getNext
-  traverse (\(ci, gi) -> addInstructions [ IABx OpClosure n gi
-                                         , IABx OpSetGlobal n ci ]) 
-    (zip cinxs ginxs)
+  traverse (\(ci, fi) -> addInstructions [ IABx OpClosure n fi
+                                         , IABC OpSetTable 0 (256 + ci) n ])
+    (zip cinxs ginxs)                      -- ^ assume env in table in 0
+  serfinxs <- addFunctions $ map snd serialized
+  sercinxs <- addConstants $ map (LuaString . fst) serialized
+  n <- getNext
+  traverse (\(ci, fi) -> addInstructions [ IABx OpClosure n fi
+                                         , IABx OpSetGlobal n ci ])
+    (zip sercinxs serfinxs)                 -- ^ serialization funcs in globals
   traverse (\fi -> addInstructions [ IABx OpClosure n fi
-                                   , IABC OpMove 0 0 0 -- Assume env table in 0
+                                   , IABC OpMove 0 0 0 -- assume env table in 0
                                    , IABC OpCall n 1 2]) finxs
   return ()
   where
@@ -414,7 +416,6 @@ addProgram xs = do
     freeVars = allVars xs -- search for free variables
     prims = filter ((`S.member` freeVars) . fst) primitives -- add primitives
     serialized = if "eval" `S.member` freeVars then serialize_funcs else []
-    globals = serialized ++ prims
     tofunc (Comm x) = toFunc x
     tofunc (Def x) = toFuncDef x
 
