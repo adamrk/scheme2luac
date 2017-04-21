@@ -22,8 +22,8 @@ $ stack exec -- scheme2luac-exe test.scm out.luac
 $ lua out.luac
 ```
 
-# Implemented Components of RSR5 Standard
-This project aims to implement the [RSR5](http://www.schemers.org/Documents/Standards/R5RS/) scheme standard.
+# Implemented Components of R5RS Standard
+This project aims to implement the [R5RS](http://www.schemers.org/Documents/Standards/R5RS/) scheme standard.
 These expressions have been implemented:
 * `let`
 * `define`
@@ -35,8 +35,13 @@ These expressions have been implemented:
 as well as several primitive functions (see the list of primitives in [CodeGenerator.hs](src/CodeGenerator.hs)).
 There is also support for macros using `define-syntax`.
 
-# Differences from RSR5 Standard
-
+# Differences from R5RS Standard
+* The full heirarchy of numerical types is not supported. All numbers are converted to Lua Numbers which are doubles.
+* `quasiquote` is not supported.
+* `quoted` symbols do not yet print properly.
+* equivalence predicates are not supported.
+* input/output ports are not yet supported
+* many derived expressions are not supported, but can easily be implemented since we have support for macros. 
 
 # Using 'eval'
 If your scheme script uses the `eval` function then it will need to have access to the compiler at runtime. This requires a special compilation process (these commands are in the file [build.sh](build.sh)):
@@ -45,7 +50,7 @@ $ stack build
 $ stack exec -- ghc LibCompiler.hs -shared -dynamic -fPIC -o libcompiler.so -lHSrts-ghc8.0.2
 $ stack exec -- ghc libcompilerhelper.c -no-hs-main -optl -L. -lcompiler -o lualibhelper.so -shared -fPIC -dynamic
 ```
-Note that you will need to change the option `-lHSrts-ghc8.0.2` to match with your version of GHC. Check which version of ghc you're running with `stack exec -- ghc --version`.
+Note that you will need to change the option `-lHSrts-ghc8.0.2` to match with your version of GHC. Check which version of ghc you're running with `stack exec -- ghc --version`. You will also need the lua header files `lua.h` and `luaconf.h` which are available [here](https://www.lua.org/source/5.1/). Modify the `-L.` flag to the path to these header files.
 
 This will create two shared libraries: `libcompiler.so` and `lualibhelper.so`. At runtime Lua must be able to access the `lualibhelper.so` library and the path to `libcompiler.so` must be in the `LD_LIBRARY_PATH` environment variable. Otherwise you will see an error like this:
 ```
